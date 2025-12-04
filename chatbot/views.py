@@ -73,14 +73,18 @@ class ChatBotView(APIView):
         
 
     def _create_structured_data(self, user, response_type, content, date, time):
+        """Extract and save structured data from chatbot response"""
         
-        if response_type == 'event' and date:
+        if response_type == 'event':
+            # Parse and validate the time field
+            parsed_time = self._parse_time_field(time)
+            
             Event.objects.create(
                 user=user,
                 title=content[:255],
                 description=content,
-                date=self._parse_date(date),
-                time=self._parse_time(time) if time else None
+                date=date,
+                time=parsed_time
             )
         
         elif response_type == 'task':
@@ -88,6 +92,7 @@ class ChatBotView(APIView):
             if date and time:
                 start_time = self._combine_datetime(date, time)
             elif date:
+                from datetime import datetime
                 start_time = datetime.strptime(date, '%Y-%m-%d')
             
             Task.objects.create(
@@ -107,30 +112,31 @@ class ChatBotView(APIView):
                 points=[]
             )
 
-    def _parse_date(self, date_str):
-        if not date_str:
-            return None
-        try:
-            return datetime.strptime(date_str, '%Y-%m-%d').date()
-        except:
-            return None
-
-    def _parse_time(self, time_str):
-        if not time_str:
-            return None
-        try:
-            return datetime.strptime(time_str, '%H:%M').time()
-        except:
-            return None
-
     def _combine_datetime(self, date_str, time_str):
+        """Combine date and time strings into an aware datetime"""
         try:
+            from datetime import datetime
             date_obj = datetime.strptime(date_str, '%Y-%m-%d')
             time_obj = datetime.strptime(time_str, '%H:%M').time()
             combined = datetime.combine(date_obj.date(), time_obj)
             return timezone.make_aware(combined)
         except:
             return None
+    
+    def _parse_time_field(self, time_str):
+        """Parse and validate time string to HH:MM format"""
+        if not time_str:
+            return None
+        
+        try:
+            # Try to parse as HH:MM format
+            from datetime import datetime
+            time_obj = datetime.strptime(time_str, '%H:%M').time()
+            return time_obj
+        except ValueError:
+            # If it's not a valid time format (e.g., "morning", "afternoon"), return None
+            return None
+
 
 
 

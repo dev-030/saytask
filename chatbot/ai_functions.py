@@ -1,13 +1,23 @@
 import os
 import json
 from typing import List, Dict, Any
+from datetime import datetime, timezone
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from django.conf import settings
 
 
 def chatbot(convo_history: List[Dict], query: str) -> Dict[str, Any]:
-
+    """
+    Chatbot that classifies user queries and returns structured responses.
+    
+    Args:
+        convo_history: List of conversation messages with 'role', 'timestamp', 'message'
+        query: User's current query
+        
+    Returns:
+        Dict with 'response_type' (response/event/note/task), 'content', and optional 'date'/'time'
+    """
     api_key = getattr(settings, 'OPENAI_API_KEY', os.getenv('OPENAI_API_KEY'))
     
     llm = ChatOpenAI(
@@ -20,8 +30,8 @@ def chatbot(convo_history: List[Dict], query: str) -> Dict[str, Any]:
 Classify the user's request and respond accordingly:
 - response: General conversation or questions
 - event: Time-specific activities or appointments (include DATE and TIME)
-- note: Information to remember or save (include DATE and TIME if mentioned). Triggers: "note", "remember", "write down", "save".
-- task: Action items or todos (include DATE and TIME if deadline mentioned). Triggers: "task", "todo", "remind me".
+- note: Information to remember or save (include DATE and TIME if mentioned)
+- task: Action items or todos (include DATE and TIME if deadline mentioned)
 
 Format your response as JSON:
 {
@@ -31,38 +41,32 @@ Format your response as JSON:
   "time": "HH:MM (if applicable)"
 }
 
-IMPORTANT:
-1. If the user asks to "create", "add", "schedule", "remind", or "write" something, it is likely NOT a "response".
-2. Only include date and time fields if they are mentioned or relevant.
-3. Output raw JSON only, no markdown formatting."""
+Only include date and time fields if they are mentioned or relevant."""
     
     messages = [SystemMessage(content=system_prompt)]
     
+    # Add conversation history
     for msg in convo_history:
         if msg["role"] == "user":
             messages.append(HumanMessage(content=msg["message"]))
         elif msg["role"] == "assistant":
             messages.append(AIMessage(content=msg["message"]))
     
+    # Add current query
     messages.append(HumanMessage(content=query))
     
+    # Get response
     response = llm.invoke(messages)
     
+    # Parse JSON response
     try:
-        content = response.content.strip()
-        if content.startswith("```json"):
-            content = content[7:]
-        if content.startswith("```"):
-            content = content[3:]
-        if content.endswith("```"):
-            content = content[:-3]
-        content = content.strip()
+        result = json.loads(response.content.strip())
         
-        result = json.loads(content)
-        
+        # Handle if result is a list (take first item)
         if isinstance(result, list):
             result = result[0] if result else {}
         
+        # Ensure result is a dict
         if not isinstance(result, dict):
             raise ValueError("Invalid response format")
         
@@ -71,6 +75,7 @@ IMPORTANT:
             "content": result.get("content", response.content)
         }
         
+        # Add date and time if present
         if "date" in result and result["date"]:
             output["date"] = result["date"]
         if "time" in result and result["time"]:
@@ -78,6 +83,7 @@ IMPORTANT:
             
         return output
     except (json.JSONDecodeError, ValueError, KeyError):
+        # Fallback if JSON parsing fails
         return {
             "response_type": "response",
             "content": response.content
