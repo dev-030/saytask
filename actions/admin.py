@@ -13,11 +13,11 @@ class NoteAdmin(admin.ModelAdmin):
 
 @admin.register(Event)
 class EventAdmin(admin.ModelAdmin):
-    list_display = ('id', 'user', 'title', 'event_datetime', 'location_address', 'created_at')
+    list_display = ('id', 'user', 'title', 'date', 'time', 'location_address', 'created_at')
     search_fields = ('title', 'description', 'location_address', 'user__email')
-    list_filter = ('event_datetime', 'user')
+    list_filter = ('date', 'user')
     readonly_fields = ('id', 'created_at')
-    ordering = ('-event_datetime',)
+    ordering = ('-date', '-time')
 
 
 
