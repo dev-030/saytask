@@ -59,6 +59,20 @@ class AdminProfileSerializer(serializers.ModelSerializer):
         model = User
         fields = ['id', 'email', 'full_name', 'username']
         read_only_fields = ['id']
+    
+    def validate_email(self, value):
+        """Ensure email is unique across all users"""
+        user = self.instance
+        if User.objects.filter(email=value).exclude(id=user.id).exists():
+            raise serializers.ValidationError("This email address is already in use by another user.")
+        return value
+    
+    def validate_username(self, value):
+        """Ensure username is unique across all users"""
+        user = self.instance
+        if User.objects.filter(username=value).exclude(id=user.id).exists():
+            raise serializers.ValidationError("This username is already in use by another user.")
+        return value
 
 
 class AdminPasswordChangeSerializer(serializers.Serializer):
