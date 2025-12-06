@@ -1,10 +1,12 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from . import views
+from . import subscription_views
 
 # Router for viewsets
 router = DefaultRouter()
 router.register(r'users', views.UserManagementViewSet, basename='user-management')
+router.register(r'subscription-plans', subscription_views.AdminSubscriptionPlanViewSet, basename='admin-subscription-plan')
 
 urlpatterns = [
     # === NEW UNIFIED APIS ===

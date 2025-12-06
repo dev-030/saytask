@@ -40,8 +40,8 @@ class SubscriptionPlan(models.Model):
 
     PLAN_CHOICES = [
         ('free', 'Free'),
-        ('basic', 'Basic'),
         ('premium', 'Premium'),
+        ('unlimited', 'Unlimited'),
     ]
 
     name = models.CharField(max_length=20, choices=PLAN_CHOICES, default='free', unique=True)

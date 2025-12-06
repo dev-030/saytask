@@ -164,8 +164,8 @@ class UnifiedDashboardView(views.APIView):
                 created_at__lte=month_end
             ).count()
             
-            business_count = Subscription.objects.filter(
-                plan__name='business',
+            unlimited_count = Subscription.objects.filter(
+                plan__name='unlimited',
                 created_at__gte=month_start,
                 created_at__lte=month_end
             ).count()
@@ -174,7 +174,7 @@ class UnifiedDashboardView(views.APIView):
                 'month': month_start.strftime('%b'),
                 'year': month_start.year,
                 'premium': premium_count,
-                'business': business_count
+                'unlimited': unlimited_count
             })
         
         return data
@@ -344,6 +344,149 @@ class UserManagementViewSet(viewsets.ModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
     
+    @action(detail=True, methods=['patch'], url_path='update')
+    def unified_update(self, request, pk=None):
+        """
+        Unified endpoint to update user's subscription plan and/or active status.
+        All fields are optional - send only what you want to update.
+        """
+        from .user_serializers import UnifiedUserUpdateSerializer
+        
+        user = self.get_object()
+        serializer = UnifiedUserUpdateSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        result = {'changes': []}
+        
+        # Handle subscription plan change
+        if 'plan_id' in serializer.validated_data:
+            plan_id = serializer.validated_data['plan_id']
+            billing_interval = serializer.validated_data.get('billing_interval', 'month')
+            
+            new_plan = get_object_or_404(SubscriptionPlan, id=plan_id)
+            subscription = get_object_or_404(Subscription, user=user)
+            old_plan = subscription.plan
+            
+            # Check if already on this plan
+            if subscription.plan != new_plan or subscription.billing_interval != billing_interval:
+                try:
+                    # Update Stripe subscription if it exists
+                    if subscription.stripe_subscription_id:
+                        price_id = new_plan.stripe_monthly_price_id if billing_interval == 'month' else new_plan.stripe_annual_price_id
+                        
+                        if not price_id:
+                            return response.Response(
+                                {'detail': f'Plan {new_plan.name} is missing Stripe price ID'},
+                                status=status.HTTP_400_BAD_REQUEST
+                            )
+                        
+                        stripe_sub = stripe.Subscription.retrieve(subscription.stripe_subscription_id)
+                        stripe.Subscription.modify(
+                            subscription.stripe_subscription_id,
+                            cancel_at_period_end=False,
+                            items=[{
+                                'id': stripe_sub['items']['data'][0].id,
+                                'price': price_id
+                            }],
+                            proration_behavior='always_invoice'
+                        )
+                    
+                    # Update local database
+                    subscription.plan = new_plan
+                    subscription.billing_interval = billing_interval
+                    subscription.save()
+                    
+                    # Log activity
+                    ActivityLog.objects.create(
+                        user=user,
+                        action='subscription_updated',
+                        description=f'Subscription changed from {old_plan.name} to {new_plan.name} by admin {request.user.email}'
+                    )
+                    
+                    result['changes'].append(f'Subscription updated: {old_plan.name} → {new_plan.name}')
+                    
+                except stripe.error.StripeError as e:
+                    return response.Response(
+                        {'detail': f'Stripe error: {str(e)}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+        
+        # Handle status change
+        if 'is_active' in serializer.validated_data:
+            is_active = serializer.validated_data['is_active']
+            reason = serializer.validated_data.get('reason', '')
+            
+            if user.is_active != is_active:
+                try:
+                    subscription = Subscription.objects.get(user=user)
+                    
+                    if not is_active:  # Banning user
+                        # Cancel Stripe subscription immediately
+                        if subscription.stripe_subscription_id:
+                            stripe.Subscription.cancel(subscription.stripe_subscription_id)
+                        
+                        # Update local subscription
+                        subscription.status = 'canceled'
+                        subscription.stripe_subscription_id = None
+                        subscription.save()
+                        
+                        # Deactivate user
+                        user.is_active = False
+                        user.save()
+                        
+                        # Log activity
+                        ActivityLog.objects.create(
+                            user=user,
+                            action='user_suspended',
+                            description=f'User suspended by admin {request.user.email}. Reason: {reason or "No reason provided"}'
+                        )
+                        
+                        result['changes'].append(f'User banned. Reason: {reason or "No reason provided"}')
+                    
+                    else:  # Reactivating user
+                        user.is_active = True
+                        user.save()
+                        
+                        # Log activity
+                        ActivityLog.objects.create(
+                            user=user,
+                            action='user_reactivated',
+                            description=f'User reactivated by admin {request.user.email}'
+                        )
+                        
+                        result['changes'].append('User reactivated')
+                
+                except Subscription.DoesNotExist:
+                    # If no subscription exists, just update user status
+                    user.is_active = is_active
+                    user.save()
+                    
+                    action_type = 'user_reactivated' if is_active else 'user_suspended'
+                    ActivityLog.objects.create(
+                        user=user,
+                        action=action_type,
+                        description=f'User {"reactivated" if is_active else "suspended"} by admin {request.user.email}'
+                    )
+                    
+                    result['changes'].append(f'User {"reactivated" if is_active else "banned"}')
+                
+                except stripe.error.StripeError as e:
+                    return response.Response(
+                        {'detail': f'Stripe error: {str(e)}'},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+        
+        if not result['changes']:
+            return response.Response(
+                {'detail': 'No changes were made (already in requested state)'},
+                status=status.HTTP_200_OK
+            )
+        
+        return response.Response({
+            'detail': 'User updated successfully',
+            'changes': result['changes']
+        }, status=status.HTTP_200_OK)
+    
     @action(detail=True, methods=['patch'], url_path='status')
     def update_status(self, request, pk=None):
         """Suspend or reactivate user account"""
@@ -425,6 +568,7 @@ class UserManagementViewSet(viewsets.ModelViewSet):
                 {'detail': f'Stripe error: {str(e)}'},
                 status=status.HTTP_400_BAD_REQUEST
             )
+
 
 
 # ==================== ADMIN PROFILE APIs ====================
