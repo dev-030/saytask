@@ -6,30 +6,31 @@ from .models import Event, Task, Note
 
 
 
-def check_duplicate_event(user, title, date, time):
-
+def check_duplicate_event(user, title, event_datetime):
+    
     if not title or not title.strip():
         return False, None
     
-    if not date:
+    if not event_datetime:
         return False, None 
     
     query_filter = {
         'user': user,
         'title__iexact': title.strip(),
-        'date': date
+        'event_datetime': event_datetime
     }
-    
-    if time is not None:
-        query_filter['time'] = time
     
     exists = Event.objects.filter(**query_filter).exists()
     
     if exists:
         try:
-            time_str = f" at {time.strftime('%H:%M')}" if time else ""
-            date_str = date.strftime('%Y-%m-%d') if hasattr(date, 'strftime') else str(date)
-            return True, f"Duplicate event: '{title}' already exists on {date_str}{time_str}"
+            # Format datetime for user-friendly message
+            from django.utils import timezone
+            if timezone.is_aware(event_datetime):
+                dt_str = event_datetime.strftime('%Y-%m-%d at %H:%M UTC')
+            else:
+                dt_str = event_datetime.strftime('%Y-%m-%d at %H:%M')
+            return True, f"Duplicate event: '{title}' already exists on {dt_str}"
         except:
             return True, f"Duplicate event: '{title}' already exists"
     

@@ -118,8 +118,7 @@ class EventListView(APIView):
         is_duplicate, dup_msg = check_duplicate_event(
             request.user,
             serializer.validated_data.get('title'),
-            serializer.validated_data.get('date'),
-            serializer.validated_data.get('time')
+            serializer.validated_data.get('event_datetime')
         )
         if is_duplicate:
             return Response({'error': dup_msg}, status=status.HTTP_409_CONFLICT)

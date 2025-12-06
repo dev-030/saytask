@@ -59,7 +59,7 @@ class EventSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Event
-        fields = ['id', 'title', 'description', 'location_address', 'date', 'time', 'created_at', 'reminders']
+        fields = ['id', 'title', 'description', 'location_address', 'event_datetime', 'created_at', 'reminders']
         read_only_fields = ['id', 'created_at']
 
     def to_representation(self, instance):
@@ -86,11 +86,11 @@ class EventSerializer(serializers.ModelSerializer):
         
         event = Event.objects.create(**validated_data)
 
-        event_datetime = self._get_event_datetime(event)
-        if event_datetime:
+        # Use event_datetime directly for reminder calculations
+        if event.event_datetime:
             event_ct = ContentType.objects.get_for_model(Event)
             for rem_data in reminders_data:
-                scheduled_time = event_datetime - timedelta(minutes=rem_data['time_before'])
+                scheduled_time = event.event_datetime - timedelta(minutes=rem_data['time_before'])
                 Reminder.objects.create(
                     content_type=event_ct,
                     object_id=event.id,
@@ -116,10 +116,10 @@ class EventSerializer(serializers.ModelSerializer):
                 object_id=instance.id
             ).delete()
 
-            event_datetime = self._get_event_datetime(instance)
-            if event_datetime:
+            # Use event_datetime directly for reminder calculations
+            if instance.event_datetime:
                 for rem_data in reminders_data:
-                    scheduled_time = event_datetime - timedelta(minutes=rem_data['time_before'])
+                    scheduled_time = instance.event_datetime - timedelta(minutes=rem_data['time_before'])
                     Reminder.objects.create(
                         content_type=event_ct,
                         object_id=instance.id,
@@ -129,20 +129,6 @@ class EventSerializer(serializers.ModelSerializer):
                     )
         
         return instance
-    
-    def _get_event_datetime(self, event):
-        """Combine date and time fields into a datetime object"""
-        if event.date and event.time:
-            from datetime import datetime
-            from django.utils import timezone
-            dt = datetime.combine(event.date, event.time)
-            return timezone.make_aware(dt)
-        elif event.date:
-            from datetime import datetime, time
-            from django.utils import timezone
-            dt = datetime.combine(event.date, time(0, 0))
-            return timezone.make_aware(dt)
-        return None
 
 
 
