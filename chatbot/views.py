@@ -104,21 +104,48 @@ class ChatBotView(APIView):
             parsed_date = self._parse_date_field(date)
             parsed_time = self._parse_time_field(time)
             
+            # Combine into a single datetime in UTC
+            event_datetime = None
+            if parsed_date and parsed_time:
+                # Both date and time provided
+                from datetime import datetime
+                event_datetime = datetime.combine(parsed_date, parsed_time)
+                event_datetime = timezone.make_aware(event_datetime)
+            elif parsed_date:
+                # Only date provided, use midnight
+                from datetime import datetime, time as dt_time
+                event_datetime = datetime.combine(parsed_date, dt_time(0, 0))
+                event_datetime = timezone.make_aware(event_datetime)
+            elif parsed_time:
+                # Only time provided - use today's date in UTC
+                from datetime import datetime, date as dt_date
+                now_utc = timezone.now()
+                today_date = now_utc.date()
+                
+                # Combine with today's date
+                event_datetime = datetime.combine(today_date, parsed_time)
+                event_datetime = timezone.make_aware(event_datetime)
+                
+                # If the time has already passed today, assume tomorrow
+                if event_datetime <= now_utc:
+                    from datetime import timedelta
+                    tomorrow_date = today_date + timedelta(days=1)
+                    event_datetime = datetime.combine(tomorrow_date, parsed_time)
+                    event_datetime = timezone.make_aware(event_datetime)
+            
             Event.objects.create(
                 user=user,
                 title=content[:255],
                 description=content,
-                date=parsed_date,
-                time=parsed_time
+                event_datetime=event_datetime
             )
         
         elif response_type == 'task':
-            start_time = None
-            
             # Parse date/time with error handling
             parsed_date = self._parse_date_field(date)
             parsed_time = self._parse_time_field(time)
             
+            start_time = None
             if parsed_date and parsed_time:
                 # Both date and time are valid
                 from datetime import datetime
@@ -129,6 +156,22 @@ class ChatBotView(APIView):
                 from datetime import datetime, time as dt_time
                 start_time = datetime.combine(parsed_date, dt_time(0, 0))
                 start_time = timezone.make_aware(start_time)
+            elif parsed_time:
+                # Only time provided - use today's date in UTC
+                from datetime import datetime, date as dt_date
+                now_utc = timezone.now()
+                today_date = now_utc.date()
+                
+                # Combine with today's date
+                start_time = datetime.combine(today_date, parsed_time)
+                start_time = timezone.make_aware(start_time)
+                
+                # If the time has already passed today, assume tomorrow
+                if start_time <= now_utc:
+                    from datetime import timedelta
+                    tomorrow_date = today_date + timedelta(days=1)
+                    start_time = datetime.combine(tomorrow_date, parsed_time)
+                    start_time = timezone.make_aware(start_time)
             
             Task.objects.create(
                 user=user,

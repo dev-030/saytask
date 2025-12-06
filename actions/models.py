@@ -38,12 +38,11 @@ class Event(models.Model):
     title = models.CharField(max_length=255)
     description = models.TextField(null=True, blank=True)
     location_address = models.TextField(null=True, blank=True)
-    date = models.DateField(null=True, blank=True)
-    time = models.TimeField(null=True, blank=True)
+    event_datetime = models.DateTimeField(null=True, blank=True, help_text="Event date and time in UTC (ISO 8601 format)")
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        ordering = ['date', 'time']
+        ordering = ['event_datetime']
     
     def __str__(self):
         return self.title

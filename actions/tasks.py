@@ -105,13 +105,9 @@ def check_and_send_reminders():
             obj_type = "Event" if isinstance(obj, Event) else "Task"
             obj_title = obj.title
             
-            if hasattr(obj, 'date') and obj.date:
-                # Event with separate date and time fields
-                from datetime import datetime, time as dt_time
-                event_time = timezone.make_aware(datetime.combine(
-                    obj.date,
-                    obj.time if obj.time else dt_time(0, 0)
-                ))
+            # Get event time based on object type
+            if isinstance(obj, Event) and obj.event_datetime:
+                event_time = obj.event_datetime
             elif hasattr(obj, 'scheduled_start') and obj.scheduled_start:
                 event_time = obj.scheduled_start
             else:
