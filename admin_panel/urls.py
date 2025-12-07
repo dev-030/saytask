@@ -21,8 +21,7 @@ urlpatterns = [
     path('profile/', views.AdminProfileView.as_view(), name='admin-profile'),
     path('profile/password/', views.AdminPasswordChangeView.as_view(), name='admin-password-change'),
     
-    # Legal Documents``
-    path('legal/documents/', views.LegalDocumentView.as_view(), name='legal-documents'),
+    # Legal Documents
     path('legal/terms/', views.TermsAndConditionsView.as_view(), name='terms-and-conditions'),
     path('legal/privacy/', views.PrivacyPolicyView.as_view(), name='privacy-policy'),
     
