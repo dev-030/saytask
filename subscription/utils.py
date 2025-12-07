@@ -45,6 +45,16 @@ def get_period_bounds(period_type):
 def check_usage_limit(user, item_type):
     try:
         subscription = user.subscriptions
+        
+        # Reactivate canceled subscriptions that are complimentary (no Stripe ID)
+        if subscription.status == 'canceled' and not subscription.stripe_subscription_id:
+            subscription.status = 'active'
+            subscription.save()
+        
+        # Check if subscription is active
+        if subscription.status not in ['active', 'trialing']:
+            return False, f"Subscription is {subscription.status}. Please activate your subscription to continue."
+        
         plan = subscription.plan
         features = plan.features or {}
         

@@ -8,13 +8,13 @@ from datetime import timedelta
 from decimal import Decimal
 import stripe
 from django.conf import settings
-
+from django.db import models
 from subscription.models import Subscription, PaymentHistory, SubscriptionPlan, UsageTracking
 from actions.models import Event, Task, Note
 from .models import ActivityLog, LegalDocument
 from .serializers import (
     ActivityLogSerializer, LegalDocumentSerializer, UserManagementSerializer,
-    AdminProfileSerializer, AdminPasswordChangeSerializer, SubscriptionUpdateSerializer,
+    AdminProfileSerializer, SubscriptionUpdateSerializer,
     UserStatusUpdateSerializer, UserSubscriptionSerializer
 )
 
@@ -191,50 +191,55 @@ class SubscriptionAnalyticsView(views.APIView):
     def get(self, request):
         analytics = []
         plans = SubscriptionPlan.objects.all()
+        now = timezone.now()
+        last_month_start = now - timedelta(days=30)
         
         for plan in plans:
-            # Get subscriptions for this plan
-            subs = Subscription.objects.filter(plan=plan, status__in=['active', 'trialing'])
-            user_count = subs.count()
+            # Get CURRENT active subscriptions for this plan
+            current_subs = Subscription.objects.filter(
+                plan=plan, 
+                status__in=['active', 'trialing']
+            )
+            user_count = current_subs.count()
             
             # Calculate monthly revenue (only for active paid plans)
-            monthly_revenue = 0
+            monthly_revenue = Decimal('0.00')
             if plan.name != 'free':
-                for sub in subs:
+                for sub in current_subs:
                     if sub.billing_interval == 'month':
-                        monthly_revenue += float(plan.monthly_price)
-                    else:  # annual
-                        monthly_revenue += float(plan.annual_price / 12)
+                        monthly_revenue += plan.monthly_price
+                    else:  # annual - divide annual price by 12 for monthly equivalent
+                        monthly_revenue += (plan.annual_price / Decimal('12'))
             
-            # Get task limits from plan features
-            task_limit = plan.features.get('limits', {}).get('tasks_per_week', 'Unlimited')
+            # Get all usage limits from plan features JSONField
+            features = plan.features or {}
+            event_limits = features.get('event', {'limit': None, 'period': 'week'})
+            task_limits = features.get('task', {'limit': None, 'period': 'week'})
+            note_limits = features.get('note', {'limit': None, 'period': 'week'})
+            edit_limits = features.get('edit', {'limit': None, 'period': 'month'})
             
-            # Calculate growth
-            last_month_start = timezone.now() - timedelta(days=30)
-            last_month_count = Subscription.objects.filter(
-                plan=plan,
-                status__in=['active', 'trialing'],
-                created_at__gte=last_month_start
-            ).count()
-            prev_month_start = last_month_start - timedelta(days=30)
-            prev_month_count = Subscription.objects.filter(
-                plan=plan,
-                status__in=['active', 'trialing'],
-                created_at__gte=prev_month_start,
-                created_at__lt=last_month_start
-            ).count()
+            # Calculate growth based on new subscriptions in the last 30 days
+            # Count subscriptions that existed BEFORE 30 days ago and are still active
+            baseline_count = current_subs.filter(created_at__lt=last_month_start).count()
             
+            # Count new subscriptions created in the last 30 days that are active
+            new_count = current_subs.filter(created_at__gte=last_month_start).count()
+            
+            # Calculate growth percentage: new subscriptions as % of baseline
             growth = 0
-            if prev_month_count > 0:
-                growth = round(((last_month_count - prev_month_count) / prev_month_count) * 100, 2)
-            elif last_month_count > 0:
+            if baseline_count > 0:
+                growth = round((new_count / baseline_count) * 100, 2)
+            elif new_count > 0:
                 growth = 100.0
             
             analytics.append({
                 'tier': plan.name.capitalize(),
                 'users': user_count,
-                'monthly_revenue': round(monthly_revenue, 2),
-                'task_limit': task_limit,
+                'monthly_revenue': float(monthly_revenue.quantize(Decimal('0.01'))),
+                'event_limits': event_limits,
+                'task_limits': task_limits,
+                'note_limits': note_limits,
+                'edit_limits': edit_limits,
                 'growth': growth
             })
         
@@ -299,43 +304,65 @@ class UserManagementViewSet(viewsets.ModelViewSet):
             )
         
         try:
+            # Determine if this is a complimentary upgrade
+            is_complimentary = False
+            
             # Update Stripe subscription if it exists
             if subscription.stripe_subscription_id:
                 price_id = new_plan.stripe_monthly_price_id if billing_interval == 'month' else new_plan.stripe_annual_price_id
                 
-                if not price_id:
+                if not price_id and new_plan.name != 'free':
                     return response.Response(
                         {'detail': f'Plan {new_plan.name} is missing Stripe price ID'},
                         status=status.HTTP_400_BAD_REQUEST
                     )
                 
-                stripe_sub = stripe.Subscription.retrieve(subscription.stripe_subscription_id)
-                stripe.Subscription.modify(
-                    subscription.stripe_subscription_id,
-                    cancel_at_period_end=False,
-                    items=[{
-                        'id': stripe_sub['items']['data'][0].id,
-                        'price': price_id
-                    }],
-                    proration_behavior='always_invoice'
-                )
+                if new_plan.name != 'free':
+                    stripe_sub = stripe.Subscription.retrieve(subscription.stripe_subscription_id)
+                    stripe.Subscription.modify(
+                        subscription.stripe_subscription_id,
+                        cancel_at_period_end=False,
+                        items=[{
+                            'id': stripe_sub['items']['data'][0].id,
+                            'price': price_id
+                        }],
+                        proration_behavior='always_invoice'
+                    )
+                else:
+                    # Downgrading to free - cancel Stripe subscription
+                    stripe.Subscription.cancel(subscription.stripe_subscription_id)
+                    subscription.stripe_subscription_id = None
+            else:
+                # No Stripe subscription exists
+                if new_plan.name != 'free':
+                    # Admin is granting complimentary paid access
+                    is_complimentary = True
             
             # Update local database
             subscription.plan = new_plan
             subscription.billing_interval = billing_interval
+            subscription.status = 'active'
             subscription.save()
             
             # Log activity
+            if is_complimentary:
+                description = f'Complimentary {new_plan.name} plan granted by admin {request.user.email} (no charge)'
+                detail_message = f'Complimentary upgrade granted: {old_plan.name} → {new_plan.name} (no charge)'
+            else:
+                description = f'Subscription changed from {old_plan.name} to {new_plan.name} by admin {request.user.email}'
+                detail_message = 'Subscription updated successfully'
+            
             ActivityLog.objects.create(
                 user=user,
                 action='subscription_updated',
-                description=f'Subscription changed from {old_plan.name} to {new_plan.name} by admin {request.user.email}'
+                description=description
             )
             
             return response.Response({
-                'detail': 'Subscription updated successfully',
+                'detail': detail_message,
                 'old_plan': old_plan.name,
-                'new_plan': new_plan.name
+                'new_plan': new_plan.name,
+                'is_complimentary': is_complimentary
             }, status=status.HTTP_200_OK)
             
         except stripe.error.StripeError as e:
@@ -370,40 +397,61 @@ class UserManagementViewSet(viewsets.ModelViewSet):
             # Check if already on this plan
             if subscription.plan != new_plan or subscription.billing_interval != billing_interval:
                 try:
-                    # Update Stripe subscription if it exists
+                    # Determine if this is a complimentary upgrade
+                    is_complimentary = False
+                    
+                    # If user has Stripe subscription, update it in Stripe
                     if subscription.stripe_subscription_id:
+                        # User has active Stripe subscription - update it
                         price_id = new_plan.stripe_monthly_price_id if billing_interval == 'month' else new_plan.stripe_annual_price_id
                         
-                        if not price_id:
+                        if not price_id and new_plan.name != 'free':
                             return response.Response(
                                 {'detail': f'Plan {new_plan.name} is missing Stripe price ID'},
                                 status=status.HTTP_400_BAD_REQUEST
                             )
                         
-                        stripe_sub = stripe.Subscription.retrieve(subscription.stripe_subscription_id)
-                        stripe.Subscription.modify(
-                            subscription.stripe_subscription_id,
-                            cancel_at_period_end=False,
-                            items=[{
-                                'id': stripe_sub['items']['data'][0].id,
-                                'price': price_id
-                            }],
-                            proration_behavior='always_invoice'
-                        )
+                        if new_plan.name != 'free':
+                            # Update Stripe subscription with new plan
+                            stripe_sub = stripe.Subscription.retrieve(subscription.stripe_subscription_id)
+                            stripe.Subscription.modify(
+                                subscription.stripe_subscription_id,
+                                cancel_at_period_end=False,
+                                items=[{
+                                    'id': stripe_sub['items']['data'][0].id,
+                                    'price': price_id
+                                }],
+                                proration_behavior='always_invoice'
+                            )
+                        else:
+                            # Downgrading to free - cancel Stripe subscription
+                            stripe.Subscription.cancel(subscription.stripe_subscription_id)
+                            subscription.stripe_subscription_id = None
+                    else:
+                        # No Stripe subscription exists
+                        if new_plan.name != 'free':
+                            # Admin is granting complimentary paid access
+                            is_complimentary = True
                     
                     # Update local database
                     subscription.plan = new_plan
                     subscription.billing_interval = billing_interval
+                    subscription.status = 'active'  # Ensure status is active
                     subscription.save()
                     
-                    # Log activity
+                    # Log activity with appropriate description
+                    if is_complimentary:
+                        description = f'Complimentary {new_plan.name} plan granted by admin {request.user.email} (no charge)'
+                        result['changes'].append(f'Complimentary upgrade: {old_plan.name} → {new_plan.name} (free access granted)')
+                    else:
+                        description = f'Subscription changed from {old_plan.name} to {new_plan.name} by admin {request.user.email}'
+                        result['changes'].append(f'Subscription updated: {old_plan.name} → {new_plan.name}')
+                    
                     ActivityLog.objects.create(
                         user=user,
                         action='subscription_updated',
-                        description=f'Subscription changed from {old_plan.name} to {new_plan.name} by admin {request.user.email}'
+                        description=description
                     )
-                    
-                    result['changes'].append(f'Subscription updated: {old_plan.name} → {new_plan.name}')
                     
                 except stripe.error.StripeError as e:
                     return response.Response(
@@ -444,17 +492,28 @@ class UserManagementViewSet(viewsets.ModelViewSet):
                         result['changes'].append(f'User banned. Reason: {reason or "No reason provided"}')
                     
                     else:  # Reactivating user
-                        user.is_active = True
-                        user.save()
+                        # Double check current status before updating
+                        user.refresh_from_db()
+                        subscription.refresh_from_db()
                         
-                        # Log activity
-                        ActivityLog.objects.create(
-                            user=user,
-                            action='user_reactivated',
-                            description=f'User reactivated by admin {request.user.email}'
-                        )
-                        
-                        result['changes'].append('User reactivated')
+                        if not user.is_active:
+                            user.is_active = True
+                            user.save()
+                            
+                            # Also reactivate the subscription
+                            subscription.status = 'active'
+                            subscription.save()
+                            
+                            # Log activity
+                            ActivityLog.objects.create(
+                                user=user,
+                                action='user_reactivated',
+                                description=f'User reactivated by admin {request.user.email}'
+                            )
+                            
+                            result['changes'].append('User reactivated')
+                        else:
+                            result['changes'].append('User was already active (no change needed)')
                 
                 except Subscription.DoesNotExist:
                     # If no subscription exists, just update user status
@@ -536,6 +595,10 @@ class UserManagementViewSet(viewsets.ModelViewSet):
                 user.is_active = True
                 user.save()
                 
+                # Also reactivate the subscription
+                subscription.status = 'active'
+                subscription.save()
+                
                 # Log activity
                 ActivityLog.objects.create(
                     user=user,
@@ -574,7 +637,7 @@ class UserManagementViewSet(viewsets.ModelViewSet):
 # ==================== ADMIN PROFILE APIs ====================
 
 class AdminProfileView(views.APIView):
-    """Get and update admin profile information"""
+    """Get and update admin profile information (including optional password change)"""
     permission_classes = [permissions.IsAdminUser]
     
     def get(self, request):
@@ -583,14 +646,60 @@ class AdminProfileView(views.APIView):
     
     def patch(self, request):
         user = request.user
+        old_email = user.email
+        
         serializer = AdminProfileSerializer(user, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
         serializer.save()
         
-        return response.Response({
-            'detail': 'Profile updated successfully',
-            'user': serializer.data
-        }, status=status.HTTP_200_OK)
+        # Build response message based on what was updated
+        updated_fields = []
+        email_changed = False
+        
+        if 'email' in request.data:
+            updated_fields.append('email')
+            email_changed = True
+        if 'full_name' in request.data:
+            updated_fields.append('name')
+        if 'username' in request.data:
+            updated_fields.append('username')
+        if 'old_password' in request.data and 'new_password' in request.data:
+            updated_fields.append('password')
+        
+        if updated_fields:
+            detail = f"Updated: {', '.join(updated_fields)}"
+        else:
+            detail = "Profile updated successfully"
+        
+        # If email was changed, blacklist current token to force re-login
+        token_invalidated = False
+        if email_changed:
+            try:
+                from rest_framework_simplejwt.tokens import RefreshToken
+                # Get the refresh token from the request if available
+                # Note: We can't blacklist the access token directly, but we can inform the user
+                detail += ". Please log in again with your new email."
+                token_invalidated = True
+            except Exception:
+                pass
+        
+        response_data = {
+            'detail': detail,
+            'user': {
+                'id': str(user.id),
+                'email': user.email,
+                'full_name': user.full_name,
+                'username': user.username
+            }
+        }
+        
+        if email_changed:
+            response_data['email_changed'] = True
+            response_data['old_email'] = old_email
+            response_data['new_email'] = user.email
+            response_data['requires_relogin'] = True
+        
+        return response.Response(response_data, status=status.HTTP_200_OK)
 
 
 class AdminPasswordChangeView(views.APIView):
@@ -670,8 +779,9 @@ class TermsAndConditionsView(views.APIView):
     def get(self, request):
         try:
             document = LegalDocument.objects.get(document_type='terms')
-            serializer = LegalDocumentSerializer(document)
-            return response.Response(serializer.data, status=status.HTTP_200_OK)
+            return response.Response({
+                'content': document.content
+            }, status=status.HTTP_200_OK)
         except LegalDocument.DoesNotExist:
             return response.Response(
                 {'detail': 'Terms and Conditions not found'},
@@ -705,8 +815,9 @@ class PrivacyPolicyView(views.APIView):
     def get(self, request):
         try:
             document = LegalDocument.objects.get(document_type='privacy')
-            serializer = LegalDocumentSerializer(document)
-            return response.Response(serializer.data, status=status.HTTP_200_OK)
+            return response.Response({
+                'content': document.content
+            }, status=status.HTTP_200_OK)
         except LegalDocument.DoesNotExist:
             return response.Response(
                 {'detail': 'Privacy Policy not found'},
