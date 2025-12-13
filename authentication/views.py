@@ -69,17 +69,19 @@ class GoogleSignInView(views.APIView):
                 user.save()
             
             refresh = RefreshToken.for_user(user)
+
+            print(user.full_name)
             
             return response.Response({
                 'access': str(refresh.access_token),
                 'refresh': str(refresh),
-                'user': {
-                    'id': user.id,
-                    'email': user.email,
-                    'name': user.get_full_name(),
-                    'picture': idinfo.get('picture')
-                },
-                'is_new_user': created
+                # 'user': {
+                #     'id': user.id,
+                #     'email': user.email,
+                #     'name': user.get_full_name(),
+                #     'picture': idinfo.get('picture')
+                # },
+                # 'is_new_user': created
             }, status=status.HTTP_200_OK)
             
         except ValueError as e:
