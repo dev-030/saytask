@@ -8,16 +8,7 @@ from django.conf import settings
 
 
 def chatbot(convo_history: List[Dict], query: str) -> Dict[str, Any]:
-    """
-    Chatbot that classifies user queries and returns structured responses.
-    
-    Args:
-        convo_history: List of conversation messages with 'role', 'timestamp', 'message'
-        query: User's current query
-        
-    Returns:
-        Dict with 'response_type' (response/event/note/task), 'content', and optional 'date'/'time'
-    """
+
     api_key = getattr(settings, 'OPENAI_API_KEY', os.getenv('OPENAI_API_KEY'))
     
     llm = ChatOpenAI(
@@ -26,58 +17,66 @@ def chatbot(convo_history: List[Dict], query: str) -> Dict[str, Any]:
         openai_api_key=api_key
     )
     
-    system_prompt = """You are a friendly and helpful personal assistant that helps users manage their day.
-Your responses should be warm, conversational, and encouraging.
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    current_time = datetime.now().strftime("%H:%M")
+    
+    system_prompt = f"""You are a friendly and helpful personal assistant that helps users manage their day.
+    Your responses should be warm, conversational, and encouraging.
 
-Classify the user's request and respond accordingly:
-- response: General conversation or questions
-- event: Time-specific activities or appointments
-- note: Information to remember or save
-- task: Action items or todos
+    Current date: {current_date}
+    Current time: {current_time}
 
-Format your response as JSON:
-{
-  "type": "response|event|note|task",
-  "content": "your conversational response",
-  "date": "YYYY-MM-DD (if applicable)",
-  "time": "HH:MM (if applicable)"
-}
+    Classify the user's request and respond with structured JSON:
 
-RESPONSE STYLE GUIDELINES:
-- Be conversational and friendly (use "I've", "Sure!", "Got it!", etc.)
-- Confirm what you understood from the user
-- For events/tasks: acknowledge with enthusiasm (e.g., "Great! I've scheduled...", "✓ Added...", "All set!")
-- For notes: confirm you've saved it (e.g., "Noted! I'll remember...", "Got it, saved!")
-- Use emojis sparingly for warmth (✓, 📅, ✅)
-- Keep responses concise but warm
+    For EVENTS (appointments, meetings, scheduled activities):
+    {{
+    "type": "event",
+    "content": "Warm conversational confirmation (e.g., 'Great! I've scheduled your meeting...')",
+    "title": "Short title of the event",
+    "description": "Detailed description",
+    "location_address": "Address or location (if mentioned, otherwise empty string)",
+    "event_datetime": "YYYY-MM-DDTHH:MM:SSZ (UTC format)",
+    "reminders": [
+        {{"time_before": 30, "types": ["notification"]}}
+    ]
+    }}
 
-CRITICAL FORMATTING RULES:
-1. date MUST be in YYYY-MM-DD format (e.g., "2025-12-04"). NEVER use words like "today", "tomorrow"
-2. time MUST be in HH:MM 24-hour format (e.g., "19:00" for 7 PM, "09:00" for 9 AM)
-3. Only include date and time fields if they are mentioned or can be inferred
-4. If you cannot determine a specific date/time, omit those fields entirely
+    For TASKS (action items, todos):
+    {{
+    "type": "task",
+    "content": "Warm conversational confirmation",
+    "title": "Short title of the task",
+    "description": "Detailed description of what needs to be done",
+    "start_time": "YYYY-MM-DDTHH:MM:SSZ (when to start, UTC format)",
+    "end_time": "YYYY-MM-DDTHH:MM:SSZ (deadline, UTC format)",
+    "tags": ["tag1", "tag2"],
+    "reminders": [
+        {{"time_before": 60, "types": ["notification"]}}
+    ]
+    }}
 
-EXAMPLES:
-User: "meeting at 7pm with mir"
-Response: {
-  "type": "event",
-  "content": "Perfect! I've scheduled your meeting with Mir for today at 7 PM ✓",
-  "date": "2025-12-04",
-  "time": "19:00"
-}
+    For NOTES (information to remember):
+    {{
+    "type": "note",
+    "title": "Short title of the note",
+    "content": "The information to save"
+    }}
 
-User: "remind me to buy milk"
-Response: {
-  "type": "task",
-  "content": "Sure thing! I'll remind you to buy milk ✓"
-}
+    For GENERAL RESPONSE (questions, greetings, etc.):
+    {{
+    "type": "response",
+    "content": "Your helpful response"
+    }}
 
-User: "note that the wifi password is abc123"
-Response: {
-  "type": "note",
-  "content": "Got it! I've saved the WiFi password for you 📝"
-}"""
-
+    IMPORTANT RULES:
+    - All datetime must be in ISO-8601 UTC format (e.g., "2025-12-03T19:00:00Z")
+    - Convert mentioned times to UTC (assume user is in UTC+6/Asia/Dhaka timezone)
+    - Always include both simple fields (date, time) AND rich fields (event_datetime, etc.) for compatibility
+    - time_before in reminders is in minutes
+    - Include appropriate reminders based on urgency
+    - Extract tags from context for tasks
+    - Always include location_address for events (empty string if not mentioned)
+    """
     
     messages = [SystemMessage(content=system_prompt)]
     
@@ -106,18 +105,43 @@ Response: {
         if not isinstance(result, dict):
             raise ValueError("Invalid response format")
         
-        output = {
-            "response_type": result.get("type", "response"),
-            "content": result.get("content", response.content)
-        }
+        response_type = result.get("type", "response")
         
-        # Add date and time if present
-        if "date" in result and result["date"]:
-            output["date"] = result["date"]
-        if "time" in result and result["time"]:
-            output["time"] = result["time"]
-            
-        return output
+        # Add rich fields based on type
+        if response_type == "event":
+            return {
+                "response_type": "event",
+                "title": result.get("title", ""),
+                "description": result.get("description", ""),
+                "location_address": result.get("location_address", ""),
+                "event_datetime": result.get("event_datetime", ""),
+                "reminders": result.get("reminders", [{"time_before": 30, "types": ["notification"]}])
+            }
+        
+        elif response_type == "task":
+            return {
+                "response_type": "task",
+                "title": result.get("title", ""),
+                "description": result.get("description", ""),
+                "start_time": result.get("start_time", ""),
+                "end_time": result.get("end_time", ""),
+                "tags": result.get("tags", []),
+                "reminders": result.get("reminders", [{"time_before": 60, "types": ["notification"]}])
+            }
+        
+        elif response_type == "note":
+            return {
+                "response_type": "note",
+                "title": result.get("title", ""),
+                "note_content": result.get("note_content", result.get("content", ""))
+            }
+        
+        else:  # response
+            return {
+                "response_type": "response",
+                "content": result.get("content", response.content)
+            }
+        
     except (json.JSONDecodeError, ValueError, KeyError):
         # Fallback if JSON parsing fails
         return {
@@ -126,16 +150,21 @@ Response: {
         }
 
 
+
+
 def classifier(convo_history: List[Dict], query: str) -> Dict[str, Any]:
     """
-    Classifier that only identifies the type of user query without generating responses.
+    Enhanced classifier that identifies the type of user query and extracts structured data.
     
     Args:
         convo_history: List of conversation messages with 'role', 'timestamp', 'message'
         query: User's current query
         
     Returns:
-        Dict with 'response_type' (response/event/note/task) and optional 'date'/'time'
+        For events: {response_type, title, description, location_address, event_datetime, reminders}
+        For tasks: {response_type, title, description, start_time, end_time, tags, reminders}
+        For notes: {response_type, title, content}
+        For response: {response_type}
     """
     api_key = getattr(settings, 'OPENAI_API_KEY', os.getenv('OPENAI_API_KEY'))
     
@@ -145,23 +174,59 @@ def classifier(convo_history: List[Dict], query: str) -> Dict[str, Any]:
         openai_api_key=api_key
     )
     
-    system_prompt = """You are a classification system that categorizes user queries.
-Classify the user's request into one of these categories:
-- response: General conversation or questions that don't require action
-- event: Time-specific activities, appointments, or scheduled items
-- note: Information to remember or save for later
-- task: Action items, todos, or things that need to be done
+    current_date = datetime.now().strftime("%Y-%m-%d")
+    current_time = datetime.now().strftime("%H:%M")
+    
+    system_prompt = f"""You are a classification system that categorizes user queries and extracts structured data.
 
-Extract dates and times if mentioned.
+Current date: {current_date}
+Current time: {current_time}
 
-Format your response as JSON with ONLY classification data (no conversational content):
-{
-  "type": "response|event|note|task",
-  "date": "YYYY-MM-DD (if applicable)",
-  "time": "HH:MM (if applicable)"
-}
+Classify and extract data based on the type:
 
-Only include date and time fields if they are explicitly mentioned."""
+For EVENTS (appointments, meetings, scheduled activities):
+{{
+  "type": "event",
+  "title": "Short title of the event",
+  "description": "Detailed description",
+  "location_address": "Address or location (empty string if not mentioned)",
+  "event_datetime": "YYYY-MM-DDTHH:MM:SSZ (UTC format)",
+  "reminders": [
+    {{"time_before": 30, "types": ["notification"]}}
+  ]
+}}
+
+For TASKS (action items, todos):
+{{
+  "type": "task",
+  "title": "Short title of the task",
+  "description": "Detailed description of what needs to be done",
+  "start_time": "YYYY-MM-DDTHH:MM:SSZ (UTC format)",
+  "end_time": "YYYY-MM-DDTHH:MM:SSZ (deadline, UTC format)",
+  "tags": ["tag1", "tag2"],
+  "reminders": [
+    {{"time_before": 60, "types": ["notification"]}}
+  ]
+}}
+
+For NOTES (information to remember):
+{{
+  "type": "note",
+  "title": "Short title of the note",
+  "content": "The information to save"
+}}
+
+For GENERAL/RESPONSE (questions, greetings):
+{{
+  "type": "response"
+}}
+
+IMPORTANT:
+- All datetime must be in ISO-8601 UTC format (e.g., "2025-12-03T19:00:00Z")
+- Convert times to UTC (assume user is in UTC+6/Asia/Dhaka timezone)
+- time_before in reminders is in minutes
+- Extract relevant tags for tasks
+- Do NOT include conversational content - only classification data"""
     
     messages = [SystemMessage(content=system_prompt)]
     
@@ -184,17 +249,43 @@ Only include date and time fields if they are explicitly mentioned."""
         if not isinstance(result, dict):
             raise ValueError("Invalid response format")
         
-        output = {
-            "response_type": result.get("type", "response")
-        }
+        response_type = result.get("type", "response")
         
-        if "date" in result and result["date"]:
-            output["date"] = result["date"]
-        if "time" in result and result["time"]:
-            output["time"] = result["time"]
+        if response_type == "event":
+            return {
+                "response_type": "event",
+                "title": result.get("title", ""),
+                "description": result.get("description", ""),
+                "location_address": result.get("location_address", ""),
+                "event_datetime": result.get("event_datetime", ""),
+                "reminders": result.get("reminders", [{"time_before": 30, "types": ["notification"]}])
+            }
+        
+        elif response_type == "task":
+            return {
+                "response_type": "task",
+                "title": result.get("title", ""),
+                "description": result.get("description", ""),
+                "start_time": result.get("start_time", ""),
+                "end_time": result.get("end_time", ""),
+                "tags": result.get("tags", []),
+                "reminders": result.get("reminders", [{"time_before": 60, "types": ["notification"]}])
+            }
+        
+        elif response_type == "note":
+            return {
+                "response_type": "note",
+                "title": result.get("title", ""),
+                "content": result.get("content", "")
+            }
+        
+        else:  # response
+            return {
+                "response_type": "response"
+            }
             
-        return output
-    except (json.JSONDecodeError, ValueError, KeyError):
+    except (json.JSONDecodeError, ValueError, KeyError) as e:
+        print(f"⚠️ Classifier parsing error: {e}")
         return {
             "response_type": "response"
         }

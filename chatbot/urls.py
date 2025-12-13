@@ -6,4 +6,5 @@ urlpatterns = [
     path('classify/', views.ClassifyMessageView.as_view(), name='classify'),
     path('history/', views.ChatHistoryView.as_view(), name='chat_history'),
     path('summarize-note/', views.SummarizeNoteView.as_view(), name='summarize_note'),
+    path('summarize-document/', views.DocumentSummarizerView.as_view(), name='summarize_document'),
 ]
