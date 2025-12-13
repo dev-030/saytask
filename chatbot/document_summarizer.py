@@ -153,14 +153,42 @@ def _process_document(client: OpenAI, path: Path, max_length: int, custom_prompt
         try:
             from docx import Document
             doc = Document(path)
-            text = "\n".join([para.text for para in doc.paragraphs])
+            
+            # Extract text from paragraphs
+            paragraphs = [para.text for para in doc.paragraphs if para.text.strip()]
+            
+            # Also extract text from tables
+            tables_text = []
+            for table in doc.tables:
+                for row in table.rows:
+                    for cell in row.cells:
+                        if cell.text.strip():
+                            tables_text.append(cell.text.strip())
+            
+            # Combine all text
+            all_text = paragraphs + tables_text
+            text = "\n".join(all_text)
+            
+            # Debug: Print what was extracted
+            print(f"📄 DOCX extraction - Paragraphs: {len(paragraphs)}, Table cells: {len(tables_text)}, Total chars: {len(text)}")
+            
+            # If no text extracted, return helpful error
+            if not text.strip():
+                return "The DOCX file appears to be empty or contains only images. No text content was found to summarize."
+                
         except ImportError:
             return "Error: python-docx not installed. Run: pip install python-docx"
+        except Exception as e:
+            return f"Error reading DOCX file: {str(e)}"
     
     else:
         # Plain text files
         with open(path, "r", encoding="utf-8", errors="ignore") as f:
             text = f.read()
+    
+    # Validate that we have some text
+    if not text or not text.strip():
+        return f"No text content found in the {file_ext} file. The file may be empty or contain only non-text elements."
     
     # Summarize extracted text
     # If text is too long, chunk it
@@ -183,9 +211,17 @@ def _process_document(client: OpenAI, path: Path, max_length: int, custom_prompt
         
         # Combine summaries
         combined = "\n\n".join(summaries)
-        final_prompt = f"Combine these summaries into one cohesive summary of {max_length} words:\n\n{combined}"
+        # If custom prompt provided, use it as additional instruction
+        if custom_prompt:
+            final_prompt = f"{custom_prompt}\n\nText to summarize:\n\n{combined}"
+        else:
+            final_prompt = f"Combine these summaries into one cohesive summary of {max_length} words:\n\n{combined}"
     else:
-        final_prompt = custom_prompt or f"Summarize this in {max_length} words:\n\n{text}"
+        # If custom prompt provided, use it as instruction but ALWAYS include the text
+        if custom_prompt:
+            final_prompt = f"{custom_prompt}\n\nText to summarize:\n\n{text}"
+        else:
+            final_prompt = f"Summarize this in {max_length} words:\n\n{text}"
     
     response = client.chat.completions.create(
         model="gpt-4",
@@ -197,3 +233,4 @@ def _process_document(client: OpenAI, path: Path, max_length: int, custom_prompt
     )
     
     return response.choices[0].message.content.strip()
+

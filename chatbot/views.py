@@ -351,6 +351,7 @@ class SummarizeNoteView(APIView):
     
     def post(self, request):
         raw_note = request.data.get("note", "").strip()
+        max_length = request.data.get("max_length", "200")
         
         if not raw_note:
             return Response({
@@ -358,12 +359,14 @@ class SummarizeNoteView(APIView):
             }, status=status.HTTP_400_BAD_REQUEST)
         
         try:
-            result = summarize_text(raw_note)
+            # Use summarize_text with appropriate max_length
+            result = summarize_text(raw_note, max_length)
             
             return Response({
                 "summary": result["summary"],
-                "points": result["points"],
-                "original_note": raw_note
+                "original_note": raw_note,
+                "original_length": result["original_length"],
+                "summary_length": result["summary_length"]
             }, status=status.HTTP_200_OK)
             
         except Exception as e:
@@ -371,6 +374,7 @@ class SummarizeNoteView(APIView):
                 "error": "Failed to summarize note",
                 "details": str(e)
             }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 
 
 
