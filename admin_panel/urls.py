@@ -16,6 +16,7 @@ urlpatterns = [
     
     # User Management (includes viewset routes via router)
     path('', include(router.urls)),
+    path('export-users/', views.UserExportCSVView.as_view(), name='export-users-csv'),
     
     # Admin Profile
     path('profile/', views.AdminProfileView.as_view(), name='admin-profile'),

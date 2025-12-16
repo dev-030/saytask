@@ -24,6 +24,21 @@ ALLOWED_HOSTS = ["*"]
 #     "http://localhost:3000"
 # ]
 CORS_ALLOW_ALL_ORIGINS = True
+CORS_ALLOW_CREDENTIALS = True
+
+# Allow custom headers (including ngrok header)
+CORS_ALLOW_HEADERS = [
+    'accept',
+    'accept-encoding',
+    'authorization',
+    'content-type',
+    'dnt',
+    'origin',
+    'user-agent',
+    'x-csrftoken',
+    'x-requested-with',
+    'ngrok-skip-browser-warning',  # Allow ngrok custom header
+]
 
 CSRF_TRUSTED_ORIGINS = [
     'https://*.ngrok-free.dev',
@@ -204,4 +219,4 @@ APPLE_CLIENT_ID = env('APPLE_CLIENT_ID')
 
 OPENAI_API_KEY = env('OPENAI_API_KEY')
 
-FRONTEND_URL = env('SUCCESS_FRONTEND_URL')
+BASE_URL = env('SUCCESS_BASE_URL')

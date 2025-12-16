@@ -910,3 +910,97 @@ class UserListView(views.APIView):
         ).order_by('-date_joined')
         
         return response.Response({'users': list(users)}, status=status.HTTP_200_OK)
+
+
+# ==================== CSV EXPORT API ====================
+
+class UserExportCSVView(views.APIView):
+    """
+    Export all user data to CSV format for admin download.
+    Includes user details, subscription info, and authentication methods.
+    """
+    permission_classes = [permissions.IsAdminUser]
+    
+    def get(self, request):
+        import csv
+        from django.http import HttpResponse
+        from datetime import datetime
+        
+        # Create the HttpResponse with CSV headers
+        timestamp = datetime.now().strftime('%Y-%m-%d_%H%M%S')
+        filename = f'users_export_{timestamp}.csv'
+        
+        response_csv = HttpResponse(content_type='text/csv')
+        response_csv['Content-Disposition'] = f'attachment; filename="{filename}"'
+        
+        # Create CSV writer
+        writer = csv.writer(response_csv)
+        
+        # Write header row
+        writer.writerow([
+            'User ID',
+            'Email',
+            'Full Name',
+            'Username',
+            'Status',
+            'Date Joined',
+            'Subscription Plan',
+            'Subscription Status',
+            'Billing Interval',
+            'Current Price',
+            'Stripe Customer ID',
+            'Authentication Method',
+            'Phone Number',
+            'Gender',
+        ])
+        
+        # Query all users with their subscriptions (optimized)
+        users = User.objects.select_related('subscriptions', 'subscriptions__plan').all()
+        
+        # Write data rows
+        for user in users:
+            # Determine authentication method
+            auth_method = 'Email'
+            if user.is_google_auth or user.did_google_auth:
+                auth_method = 'Google'
+            elif user.is_apple_auth or user.did_apple_auth:
+                auth_method = 'Apple'
+            
+            # Get subscription details
+            subscription_plan = ''
+            subscription_status = ''
+            billing_interval = ''
+            current_price = ''
+            stripe_customer_id = ''
+            
+            try:
+                subscription = user.subscriptions
+                subscription_plan = subscription.plan.name.capitalize()
+                subscription_status = subscription.status.capitalize()
+                billing_interval = subscription.billing_interval.capitalize()
+                current_price = f"${float(subscription.current_price):.2f}"
+                stripe_customer_id = subscription.stripe_customer_id or ''
+            except Exception:
+                # User might not have a subscription
+                subscription_plan = 'N/A'
+                subscription_status = 'N/A'
+            
+            writer.writerow([
+                str(user.id),
+                user.email,
+                user.full_name or '',
+                user.username or '',
+                'Active' if user.is_active else 'Suspended',
+                user.date_joined.strftime('%Y-%m-%d %H:%M:%S'),
+                subscription_plan,
+                subscription_status,
+                billing_interval,
+                current_price,
+                stripe_customer_id,
+                auth_method,
+                user.phone_number or '',
+                user.gender or '',
+            ])
+        
+        return response_csv
+
