@@ -40,7 +40,7 @@ class CustomerPortalViewSet(viewsets.ViewSet):
         try:
             portal_session = stripe.billing_portal.Session.create(
                 customer=subscription.stripe_customer_id,
-                return_url=settings.FRONTEND_URL + "/dashboard"
+                return_url=settings.BASE_URL + "/dashboard/"
             )
 
             return response.Response({"portal_url": portal_session.url})
@@ -276,16 +276,28 @@ class CheckoutSessionViewSet(viewsets.GenericViewSet):
 
                 stripe_sub = stripe.Subscription.retrieve(subscription.stripe_subscription_id)
                 
-                updated_stripe_sub = stripe.Subscription.modify(
-                    subscription.stripe_subscription_id,
-                    cancel_at_period_end=False,
-                    items=[{
+                # Check if we're changing billing intervals
+                current_interval = stripe_sub['items']['data'][0]['price']['recurring']['interval']
+                is_changing_interval = (current_interval != billing_interval)
+                
+                # Build modification params
+                modify_params = {
+                    'cancel_at_period_end': False,
+                    'items': [{
                         'id': stripe_sub['items']['data'][0].id, 
                         'price': price_id                      
                     }],
-                    proration_behavior='always_invoice',
-                    billing_cycle_anchor='unchanged',
-                    expand=['latest_invoice'] 
+                    'proration_behavior': 'always_invoice',
+                    'expand': ['latest_invoice']
+                }
+                
+                # Only use 'unchanged' if NOT changing intervals
+                if not is_changing_interval:
+                    modify_params['billing_cycle_anchor'] = 'unchanged'
+                
+                updated_stripe_sub = stripe.Subscription.modify(
+                    subscription.stripe_subscription_id,
+                    **modify_params
                 )
 
                 invoice = updated_stripe_sub.latest_invoice
@@ -326,8 +338,8 @@ class CheckoutSessionViewSet(viewsets.GenericViewSet):
             customer=subscription.stripe_customer_id,
             line_items=[{"price": price_id, "quantity": 1}],
             mode="subscription",
-            success_url=settings.FRONTEND_URL + "/success?session_id={CHECKOUT_SESSION_ID}",
-            cancel_url=settings.FRONTEND_URL + "/cancel",
+            success_url=settings.BASE_URL + "/success?session_id={CHECKOUT_SESSION_ID}",
+            cancel_url=settings.BASE_URL + "/cancel",
             client_reference_id=user.id
         )
 
