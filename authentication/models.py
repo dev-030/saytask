@@ -104,10 +104,12 @@ class UserProfile(models.Model):
     country = models.CharField(max_length=100, blank=True)
     phone_number = models.CharField(max_length=15, blank=True, null=True)
     notifications_enabled = models.BooleanField(default=True)
+    whatsapp_bot_enabled = models.BooleanField(default=True, help_text="Enable/disable WhatsApp bot integration")
     
     fcm_token = models.TextField(null=True, blank=True)
     fcm_token_updated_at = models.DateTimeField(null=True, blank=True)
     
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
 

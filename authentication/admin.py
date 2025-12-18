@@ -7,7 +7,7 @@ class UserProfileInline(admin.StackedInline):
     can_delete = False
     verbose_name_plural = 'Profile'
     fk_name = 'user'
-    fields = ('birth_date', 'country', 'phone_number', 'notifications_enabled', 'fcm_token', 'fcm_token_updated_at')
+    fields = ('birth_date', 'country', 'phone_number', 'notifications_enabled', 'whatsapp_bot_enabled', 'fcm_token', 'fcm_token_updated_at')
     readonly_fields = ('fcm_token_updated_at', 'created_at', 'updated_at')
 
 
@@ -39,8 +39,8 @@ class UserAccountAdmin(admin.ModelAdmin):
 
 
 class UserProfileAdmin(admin.ModelAdmin):
-    list_display = ('user', 'country', 'phone_number', 'notifications_enabled', 'created_at')
-    list_filter = ('notifications_enabled', 'country')
+    list_display = ('user', 'country', 'phone_number', 'notifications_enabled', 'whatsapp_bot_enabled', 'created_at')
+    list_filter = ('notifications_enabled', 'whatsapp_bot_enabled', 'country')
     search_fields = ('user__email', 'user__username', 'country', 'phone_number')
     readonly_fields = ('created_at', 'updated_at', 'fcm_token_updated_at')
     
@@ -49,7 +49,7 @@ class UserProfileAdmin(admin.ModelAdmin):
             'fields': ('user',)
         }),
         ('Profile Information', {
-            'fields': ('birth_date', 'country', 'phone_number', 'notifications_enabled')
+            'fields': ('birth_date', 'country', 'phone_number', 'notifications_enabled', 'whatsapp_bot_enabled')
         }),
         ('FCM Token', {
             'fields': ('fcm_token', 'fcm_token_updated_at')

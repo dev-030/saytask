@@ -111,6 +111,7 @@ def chatbot(convo_history: List[Dict], query: str) -> Dict[str, Any]:
         if response_type == "event":
             return {
                 "response_type": "event",
+                "content": result.get("content", ""),  # ← ADDED THIS
                 "title": result.get("title", ""),
                 "description": result.get("description", ""),
                 "location_address": result.get("location_address", ""),
@@ -121,6 +122,7 @@ def chatbot(convo_history: List[Dict], query: str) -> Dict[str, Any]:
         elif response_type == "task":
             return {
                 "response_type": "task",
+                "content": result.get("content", ""),
                 "title": result.get("title", ""),
                 "description": result.get("description", ""),
                 "start_time": result.get("start_time", ""),
