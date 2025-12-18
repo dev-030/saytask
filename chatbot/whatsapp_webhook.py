@@ -150,7 +150,46 @@ class WhatsAppWebhookView(APIView):
     permission_classes = [AllowAny]
     
     def post(self, request):
-        """Handle incoming WhatsApp messages from Twilio"""
+        
+        try:
+            validator = RequestValidator(settings.TWILIO_AUTH_TOKEN)
+            
+            # Get the forwarded protocol (https from ngrok)
+            forwarded_proto = request.META.get('HTTP_X_FORWARDED_PROTO', 'http')
+            forwarded_host = request.META.get('HTTP_X_FORWARDED_HOST') or request.META.get('HTTP_HOST')
+            path = request.get_full_path()
+            
+            # Reconstruct the URL with the correct protocol
+            if forwarded_host:
+                url = f"{forwarded_proto}://{forwarded_host}{path}"
+            else:
+                url = request.build_absolute_uri()
+            
+            signature = request.META.get('HTTP_X_TWILIO_SIGNATURE', '')
+            
+            post_params = request.POST.dict()
+            
+            is_valid = validator.validate(url, post_params, signature)
+            
+            if not is_valid:
+                print("⚠️ SECURITY WARNING: Invalid Twilio signature!")
+                logger.warning(f"Invalid Twilio signature from {request.META.get('REMOTE_ADDR')}")
+                return HttpResponse(
+                    '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
+                    content_type='text/xml',
+                    status=403
+                )
+            
+        except Exception as e:
+            print(f"⚠️ Signature validation error: {e}")
+            logger.error(f"Twilio signature validation error: {e}")
+            import traceback
+            traceback.print_exc()
+            return HttpResponse(
+                '<?xml version="1.0" encoding="UTF-8"?><Response></Response>',
+                content_type='text/xml',
+                status=403
+            )
         
         # Extract Twilio webhook data
         from_number = request.POST.get('From', '').replace('whatsapp:', '')
