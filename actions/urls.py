@@ -12,4 +12,6 @@ urlpatterns = [
     
     path('notes/', views.NoteListView.as_view(), name='notes'),
     path('notes/<uuid:pk>/', views.NoteDetailView.as_view(), name='note_detail'),
+    
+    path('test-call/', views.MakeCallView.as_view(), name='test_call'),
 ]

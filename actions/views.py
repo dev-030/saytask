@@ -257,3 +257,23 @@ class TaskDetailView(APIView):
         task.delete()
         return Response(status=status.HTTP_204_NO_CONTENT)
 
+
+class MakeCallView(APIView):
+
+    def post(self, request):
+        from actions.twilio_service import make_reminder_call
+        
+        phone_number = request.data.get('phone_number')
+        message = request.data.get('message', 'This is a test call from SayTask.')
+        
+        if not phone_number:
+            return Response({'error': 'phone_number is required'}, status=status.HTTP_400_BAD_REQUEST)
+            
+        print(f"📞 Initiating test call to {phone_number} with message: {message}")
+        
+        call_sid = make_reminder_call(phone_number, message)
+        
+        if call_sid:
+            return Response({'status': 'success', 'call_sid': call_sid}, status=status.HTTP_200_OK)
+        else:
+            return Response({'error': 'Failed to initiate call. Check server logs.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
