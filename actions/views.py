@@ -266,24 +266,14 @@ class MakeCallView(APIView):
 
     def post(self, request):
         from actions.tasks import send_fcm_notification
-        from authentication.models import UserAccount
         import json
         import uuid
         
-        phone_number = request.data.get('phone_number')
         message = request.data.get('message', 'This is a test call from SayTask.')
         
-        if not phone_number:
-            return Response({'error': 'phone_number is required'}, status=status.HTTP_400_BAD_REQUEST)
-            
-        # Find user by phone number
-        user = UserAccount.objects.filter(phone_number=phone_number).first()
-        if not user:
-            # Try cleaning the number if needed, or exact match
-            # For this test, let's assume exact match.
-             return Response({'error': f'No user found with phone number {phone_number}'}, status=status.HTTP_404_NOT_FOUND)
-
-        print(f"📞 Initiating FCM VoIP call to {phone_number} (User: {user.email})")
+        user = request.user
+        
+        print(f"📞 Initiating FCM VoIP call to user: {user.email}")
         
         # Construct VOIP payload
         call_uuid = str(uuid.uuid4())
@@ -308,4 +298,4 @@ class MakeCallView(APIView):
             data=voip_payload
         )
         
-        return Response({'status': 'success', 'call_uuid': call_uuid, 'message': 'FCM VoIP notification sent'}, status=status.HTTP_200_OK)
+        return Response({'status': 'success', 'call_uuid': call_uuid, 'message': 'FCM VoIP notification sent to your device'}, status=status.HTTP_200_OK)
