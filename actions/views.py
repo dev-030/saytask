@@ -259,9 +259,16 @@ class TaskDetailView(APIView):
 
 
 class MakeCallView(APIView):
+    """
+    Temporary view for testing In-App VoIP calls manually (via FCM).
+    """
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
-        from actions.twilio_service import make_reminder_call
+        from actions.tasks import send_fcm_notification
+        from authentication.models import UserAccount
+        import json
+        import uuid
         
         phone_number = request.data.get('phone_number')
         message = request.data.get('message', 'This is a test call from SayTask.')
@@ -269,11 +276,36 @@ class MakeCallView(APIView):
         if not phone_number:
             return Response({'error': 'phone_number is required'}, status=status.HTTP_400_BAD_REQUEST)
             
-        print(f"📞 Initiating test call to {phone_number} with message: {message}")
+        # Find user by phone number
+        user = UserAccount.objects.filter(phone_number=phone_number).first()
+        if not user:
+            # Try cleaning the number if needed, or exact match
+            # For this test, let's assume exact match.
+             return Response({'error': f'No user found with phone number {phone_number}'}, status=status.HTTP_404_NOT_FOUND)
+
+        print(f"📞 Initiating FCM VoIP call to {phone_number} (User: {user.email})")
         
-        call_sid = make_reminder_call(phone_number, message)
+        # Construct VOIP payload
+        call_uuid = str(uuid.uuid4())
+        voip_payload = {
+            "type": "voip_call",
+            "uuid": call_uuid,
+            "caller_name": "SayTask AI",
+            "handle": "SayTask",
+            "app_name": "SayTask",
+            "has_video": "false",
+            "duration": "30000",
+            "extra": json.dumps({
+                "message_to_speak": message
+            })
+        }
         
-        if call_sid:
-            return Response({'status': 'success', 'call_sid': call_sid}, status=status.HTTP_200_OK)
-        else:
-            return Response({'error': 'Failed to initiate call. Check server logs.'}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        # Trigger async task
+        send_fcm_notification.delay(
+            user_id=user.id,
+            title=None,
+            body=None,
+            data=voip_payload
+        )
+        
+        return Response({'status': 'success', 'call_uuid': call_uuid, 'message': 'FCM VoIP notification sent'}, status=status.HTTP_200_OK)

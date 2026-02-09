@@ -4,7 +4,9 @@ from django.contrib.contenttypes.models import ContentType
 from .models import Reminder, Event, Task
 from authentication.models import UserProfile
 from .fcm_service import send_push_notification
-from .twilio_service import make_reminder_call
+from .fcm_service import send_push_notification
+import json
+
 from datetime import timedelta
 
 
@@ -44,34 +46,6 @@ def send_fcm_notification(self, user_id, title, body, data=None):
         raise self.retry(exc=e, countdown=60 * (2 ** self.request.retries))
 
 
-@shared_task(bind=True, max_retries=3)
-def send_twilio_call_task(self, user_id, message):
-    try:
-        profile = UserProfile.objects.select_related('user').get(user_id=user_id)
-
-        print('triggered 🔴', profile)
-        
-        phone = getattr(profile.user, 'phone_number', None)
-        if not phone:
-            print(f"⚠️ User {user_id} has no phone number")
-            return {'status': 'no_phone'}
-        
-        call_sid = make_reminder_call(
-            phone_number=phone,
-            message=message
-        )
-        
-        if call_sid:
-            return {'status': 'called', 'call_sid': call_sid}
-        else:
-            return {'status': 'failed'}
-        
-    except UserProfile.DoesNotExist:
-        print(f"❌ UserProfile not found for user {user_id}")
-        return {'status': 'user_not_found'}
-    except Exception as e:
-        print(f"❌ Error in send_twilio_call_task: {e}")
-        raise self.retry(exc=e, countdown=60 * (2 ** self.request.retries))
 
 
 @shared_task
@@ -149,9 +123,26 @@ def check_and_send_reminders():
                 )
             
             if 'call' in types or 'both' in types:
-                send_twilio_call_task.delay(
+                # Construct VOIP payload
+                # FCM data values must be strings
+                voip_payload = {
+                    "type": "voip_call",
+                    "uuid": str(obj.id),
+                    "caller_name": "SayTask AI",
+                    "handle": "SayTask",
+                    "app_name": "SayTask",
+                    "has_video": "false",
+                    "duration": "30000",
+                    "extra": json.dumps({
+                        "message_to_speak": call_message
+                    })
+                }
+                
+                send_fcm_notification.delay(
                     user_id=user_id,
-                    message=call_message
+                    title=None,  # No title triggers data-only message in updated fcm_service
+                    body=None,
+                    data=voip_payload
                 )
             
             reminder.sent = True

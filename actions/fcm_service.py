@@ -39,29 +39,41 @@ def send_push_notification(fcm_token, title, body, data=None):
             print("❌ Firebase not initialized")
             return None
         
-        message = messaging.Message(
-            notification=messaging.Notification(
-                title=title,
-                body=body
-            ),
-            data=data or {},
-            token=fcm_token,
-            android=messaging.AndroidConfig(
+        # Construct message
+        message_args = {
+            'data': data or {},
+            'token': fcm_token,
+            'android': messaging.AndroidConfig(
                 priority='high',
-                notification=messaging.AndroidNotification(
-                    sound='default',
-                    click_action='FLUTTER_NOTIFICATION_CLICK'
-                )
+                ttl=0,  # Immediate delivery
             ),
-            apns=messaging.APNSConfig(
+            'apns': messaging.APNSConfig(
                 payload=messaging.APNSPayload(
                     aps=messaging.Aps(
-                        sound='default',
-                        badge=1
+                        content_available=True,  # Wake up app for background processing
+                        sound='default' if title else None
                     )
-                )
+                ),
+                headers={
+                    'apns-priority': '10',
+                    'apns-push-type': 'background' if not title else 'alert'
+                }
             )
-        )
+        }
+
+        # Only add notification block if title/body exists
+        if title or body:
+            message_args['notification'] = messaging.Notification(
+                title=title,
+                body=body
+            )
+            # Add click action for notifications
+            message_args['android'].notification = messaging.AndroidNotification(
+                sound='default',
+                click_action='FLUTTER_NOTIFICATION_CLICK'
+            )
+        
+        message = messaging.Message(**message_args)
         
         response = messaging.send(message)
         print(f"✅ FCM notification sent: {response}")
