@@ -57,7 +57,7 @@ class ChatBotView(APIView):
                 content = "I understood your request but couldn't generate a proper response."
             
             # Validate response_type is valid
-            valid_types = ['response', 'event', 'task', 'note']
+            valid_types = ['response', 'event', 'task', 'note', 'multiple']
             if response_type not in valid_types:
                 response_type = 'response'
 
@@ -88,19 +88,38 @@ class ChatBotView(APIView):
             )
 
             # Try to create structured data, but don't fail the whole request if it fails
-            created_item_id = None
+            created_item_id = None   # str for single, list of {type, id} for multiple
             creation_error = None
-            try:
-                created_item_id = self._create_structured_data(user, result)
-            except Exception as e:
-                import traceback
-                creation_error = str(e)
-                print(f"⚠️ Failed to create structured data: {creation_error}")
-                print(traceback.format_exc())
 
-            # Inject the created item id into metadata before saving chat message
+            if response_type == 'multiple':
+                # Create every item the AI returned and collect their IDs
+                item_ids = []
+                for sub_item in result.get('items', []):
+                    try:
+                        sub_id = self._create_structured_data(user, sub_item)
+                        if sub_id:
+                            item_ids.append({'type': sub_item.get('response_type'), 'id': sub_id})
+                    except Exception as sub_e:
+                        import traceback
+                        print(f"⚠️ Failed to create sub-item {sub_item.get('response_type')}: {sub_e}")
+                        print(traceback.format_exc())
+                if item_ids:
+                    created_item_id = item_ids
+            else:
+                try:
+                    created_item_id = self._create_structured_data(user, result)
+                except Exception as e:
+                    import traceback
+                    creation_error = str(e)
+                    print(f"⚠️ Failed to create structured data: {creation_error}")
+                    print(traceback.format_exc())
+
+            # Inject the created item id(s) into metadata before saving chat message
             if created_item_id:
-                chat_msg_data['metadata']['item_id'] = created_item_id
+                if isinstance(created_item_id, list):
+                    chat_msg_data['metadata']['item_ids'] = created_item_id
+                else:
+                    chat_msg_data['metadata']['item_id'] = created_item_id
 
             chat_msg = ChatMessage.objects.create(**chat_msg_data)
 
@@ -111,11 +130,13 @@ class ChatBotView(APIView):
                 'message_id': str(chat_msg.id)
             }
 
-            # Include the created item id so the frontend can use edit/delete APIs
+            # Include the created item id(s) so the frontend can use edit/delete APIs
             if created_item_id:
-                response_data['item_id'] = created_item_id
+                if isinstance(created_item_id, list):
+                    response_data['item_ids'] = created_item_id
+                else:
+                    response_data['item_id'] = created_item_id
             elif creation_error and response_type in ('event', 'task', 'note'):
-                # Surface why item creation failed so it's visible in the response
                 response_data['creation_error'] = creation_error
 
             # Add backward-compatible simple fields

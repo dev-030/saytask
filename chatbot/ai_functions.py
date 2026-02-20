@@ -7,6 +7,96 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from django.conf import settings
 
 
+def _extract_json_objects(text: str) -> list:
+    """
+    Fallback extractor: tries to pull out all top-level JSON objects from a
+    string where the AI returned multiple objects without wrapping them in an array.
+    """
+    objects = []
+    depth = 0
+    start = None
+    for i, ch in enumerate(text):
+        if ch == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0 and start is not None:
+                candidate = text[start:i + 1]
+                try:
+                    objects.append(json.loads(candidate))
+                except json.JSONDecodeError:
+                    pass
+                start = None
+    return objects
+
+
+def _process_single_item(result: dict, raw_content: str) -> dict:
+    """Map a single parsed AI dict to the structured response format."""
+    response_type = result.get("type", "response")
+
+    if response_type == "event":
+        return {
+            "response_type": "event",
+            "content": result.get("content", ""),
+            "title": result.get("title", ""),
+            "description": result.get("description", ""),
+            "location_address": result.get("location_address", ""),
+            "event_datetime": result.get("event_datetime", ""),
+            "reminders": result.get("reminders", [{"time_before": 30, "types": ["notification"]}])
+        }
+    elif response_type == "task":
+        return {
+            "response_type": "task",
+            "content": result.get("content", ""),
+            "title": result.get("title", ""),
+            "description": result.get("description", ""),
+            "start_time": result.get("start_time", ""),
+            "end_time": result.get("end_time", ""),
+            "tags": result.get("tags", []),
+            "reminders": result.get("reminders", [{"time_before": 60, "types": ["notification"]}])
+        }
+    elif response_type == "note":
+        return {
+            "response_type": "note",
+            "content": result.get("content", ""),
+            "title": result.get("title", ""),
+            "note_content": result.get("note_content", result.get("content", ""))
+        }
+    else:
+        return {
+            "response_type": "response",
+            "content": result.get("content", raw_content)
+        }
+
+
+def _process_multiple_items(items: list, raw_content: str) -> dict:
+    """
+    Map a list of AI dicts into a single 'multiple' response with an 'items' list.
+    """
+    processed = []
+    content_parts = []
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        single = _process_single_item(item, "")
+        if single.get("content"):
+            content_parts.append(single["content"])
+        if single.get("response_type") != "response":
+            processed.append(single)
+
+    if not processed:
+        return {"response_type": "response", "content": raw_content}
+
+    return {
+        "response_type": "multiple",
+        "content": " ".join(content_parts) or raw_content,
+        "items": processed
+    }
+
+
 def chatbot(convo_history: List[Dict], query: str) -> Dict[str, Any]:
 
     api_key = getattr(settings, 'OPENAI_API_KEY', os.getenv('OPENAI_API_KEY'))
@@ -68,6 +158,13 @@ def chatbot(convo_history: List[Dict], query: str) -> Dict[str, Any]:
     "content": "Your helpful response"
     }}
 
+    For MULTIPLE ITEMS (when user asks for more than one thing at once, e.g. both an event AND a task):
+    Return a JSON ARRAY containing each item:
+    [
+        {{event object}},
+        {{task object}}
+    ]
+
     IMPORTANT RULES:
     - All datetime must be in ISO-8601 UTC format (e.g., "2025-12-03T19:00:00Z")
     - Convert mentioned times to UTC (assume user is in UTC+6/Asia/Dhaka timezone)
@@ -76,6 +173,8 @@ def chatbot(convo_history: List[Dict], query: str) -> Dict[str, Any]:
     - Include appropriate reminders based on urgency
     - Extract tags from context for tasks
     - Always include location_address for events (empty string if not mentioned)
+    - When the user asks for BOTH an event and a task, return a JSON ARRAY — not two separate objects
+    - Your entire response must always be valid JSON (either a single object or an array)
     """
     
     messages = [SystemMessage(content=system_prompt)]
@@ -95,57 +194,35 @@ def chatbot(convo_history: List[Dict], query: str) -> Dict[str, Any]:
     
     # Parse JSON response
     try:
-        result = json.loads(response.content.strip())
-        
-        # Handle if result is a list (take first item)
+        raw = response.content.strip()
+        result = json.loads(raw)
+    except json.JSONDecodeError:
+        # The AI sometimes returns two separate JSON objects instead of an array.
+        # Try to extract all JSON objects from the raw text with a fallback parser.
+        import re
+        extracted = _extract_json_objects(response.content)
+        if len(extracted) == 1:
+            result = extracted[0]
+        elif len(extracted) > 1:
+            result = extracted  # treat as list
+        else:
+            return {
+                "response_type": "response",
+                "content": response.content
+            }
+
+    try:
+        # Handle list (multiple items)
         if isinstance(result, list):
-            result = result[0] if result else {}
-        
+            return _process_multiple_items(result, response.content)
+
         # Ensure result is a dict
         if not isinstance(result, dict):
             raise ValueError("Invalid response format")
-        
-        response_type = result.get("type", "response")
-        
-        # Add rich fields based on type
-        if response_type == "event":
-            return {
-                "response_type": "event",
-                "content": result.get("content", ""),  # ← ADDED THIS
-                "title": result.get("title", ""),
-                "description": result.get("description", ""),
-                "location_address": result.get("location_address", ""),
-                "event_datetime": result.get("event_datetime", ""),
-                "reminders": result.get("reminders", [{"time_before": 30, "types": ["notification"]}])
-            }
-        
-        elif response_type == "task":
-            return {
-                "response_type": "task",
-                "content": result.get("content", ""),
-                "title": result.get("title", ""),
-                "description": result.get("description", ""),
-                "start_time": result.get("start_time", ""),
-                "end_time": result.get("end_time", ""),
-                "tags": result.get("tags", []),
-                "reminders": result.get("reminders", [{"time_before": 60, "types": ["notification"]}])
-            }
-        
-        elif response_type == "note":
-            return {
-                "response_type": "note",
-                "title": result.get("title", ""),
-                "note_content": result.get("note_content", result.get("content", ""))
-            }
-        
-        else:  # response
-            return {
-                "response_type": "response",
-                "content": result.get("content", response.content)
-            }
-        
-    except (json.JSONDecodeError, ValueError, KeyError):
-        # Fallback if JSON parsing fails
+
+        return _process_single_item(result, response.content)
+
+    except (ValueError, KeyError):
         return {
             "response_type": "response",
             "content": response.content
