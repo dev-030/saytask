@@ -78,7 +78,8 @@ class ChatBotView(APIView):
             # Remove None values
             metadata = {k: v for k, v in metadata.items() if v is not None}
 
-            chat_msg = ChatMessage.objects.create(
+            # item_id will be injected after creation below
+            chat_msg_data = dict(
                 user=user,
                 role='assistant',
                 content=content,
@@ -87,11 +88,18 @@ class ChatBotView(APIView):
             )
 
             # Try to create structured data, but don't fail the whole request if it fails
+            created_item_id = None
             try:
-                self._create_structured_data(user, result)
+                created_item_id = self._create_structured_data(user, result)
             except Exception as e:
                 # Log the error but don't crash - chat message is already saved
                 print(f"⚠️ Failed to create structured data: {str(e)}")
+
+            # Inject the created item id into metadata before saving chat message
+            if created_item_id:
+                chat_msg_data['metadata']['item_id'] = created_item_id
+
+            chat_msg = ChatMessage.objects.create(**chat_msg_data)
 
             # Return backward-compatible response with additional rich fields
             response_data = {
@@ -99,13 +107,17 @@ class ChatBotView(APIView):
                 'response_type': response_type,
                 'message_id': str(chat_msg.id)
             }
-            
+
+            # Include the created item id so the frontend can use edit/delete APIs
+            if created_item_id:
+                response_data['item_id'] = created_item_id
+
             # Add backward-compatible simple fields
             if result.get('date'):
                 response_data['date'] = result['date']
             if result.get('time'):
                 response_data['time'] = result['time']
-            
+
             # Add rich fields for enhanced frontend (optional)
             if result.get('title'):
                 response_data['title'] = result['title']
@@ -123,7 +135,7 @@ class ChatBotView(APIView):
                 response_data['tags'] = result['tags']
             if result.get('reminders'):
                 response_data['reminders'] = result['reminders']
-            
+
             return Response(response_data, status=status.HTTP_200_OK)
 
         except Exception as e:
@@ -171,10 +183,12 @@ class ChatBotView(APIView):
                 location_address=result.get('location_address', ''),
                 event_datetime=event_datetime
             )
-            
+
             # Create reminders if present
             if event_datetime and result.get('reminders'):
                 self._create_reminders(event, result['reminders'], event_datetime)
+
+            return str(event.id)
         
         elif response_type == 'task':
             # Try ISO-8601 format first
@@ -218,19 +232,23 @@ class ChatBotView(APIView):
                 tags=result.get('tags', []),
                 completed=False
             )
-            
+
             # Create reminders if present and we have a start_time
             if start_time and result.get('reminders'):
                 self._create_reminders(task, result['reminders'], start_time)
+
+            return str(task.id)
         
         elif response_type == 'note':
-            Note.objects.create(
+            note = Note.objects.create(
                 user=user,
                 title=result.get('title', '')[:255],
                 original=result.get('note_content', result.get('content', '')),
                 summarized='',
                 points=[]
             )
+
+            return str(note.id)
 
     def _create_reminders(self, obj, reminders_data, scheduled_time):
         """Create reminder objects for an event or task"""
