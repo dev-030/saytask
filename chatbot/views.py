@@ -89,11 +89,14 @@ class ChatBotView(APIView):
 
             # Try to create structured data, but don't fail the whole request if it fails
             created_item_id = None
+            creation_error = None
             try:
                 created_item_id = self._create_structured_data(user, result)
             except Exception as e:
-                # Log the error but don't crash - chat message is already saved
-                print(f"⚠️ Failed to create structured data: {str(e)}")
+                import traceback
+                creation_error = str(e)
+                print(f"⚠️ Failed to create structured data: {creation_error}")
+                print(traceback.format_exc())
 
             # Inject the created item id into metadata before saving chat message
             if created_item_id:
@@ -111,6 +114,9 @@ class ChatBotView(APIView):
             # Include the created item id so the frontend can use edit/delete APIs
             if created_item_id:
                 response_data['item_id'] = created_item_id
+            elif creation_error and response_type in ('event', 'task', 'note'):
+                # Surface why item creation failed so it's visible in the response
+                response_data['creation_error'] = creation_error
 
             # Add backward-compatible simple fields
             if result.get('date'):
