@@ -354,11 +354,70 @@ class ClassifyMessageView(APIView):
 
 class ChatHistoryView(APIView):
 
+    def _enrich_metadata(self, message_data):
+        """
+        If the message has an item_id in its metadata, fetch the latest
+        fields from the actual Event / Task / Note and overlay them so the
+        history always reflects the current state of the linked item.
+        """
+        metadata = message_data.get('metadata') or {}
+        item_id = metadata.get('item_id')
+        response_type = message_data.get('response_type')
+
+        if not item_id or response_type not in ('event', 'task', 'note'):
+            return message_data
+
+        try:
+            if response_type == 'event':
+                from actions.models import Event
+                obj = Event.objects.filter(pk=item_id).first()
+                if obj:
+                    metadata.update({
+                        'title': obj.title,
+                        'description': obj.description or '',
+                        'location_address': obj.location_address or '',
+                        'event_datetime': obj.event_datetime.isoformat() if obj.event_datetime else None,
+                    })
+
+            elif response_type == 'task':
+                from actions.models import Task
+                obj = Task.objects.filter(pk=item_id).first()
+                if obj:
+                    metadata.update({
+                        'title': obj.title,
+                        'description': obj.description or '',
+                        'start_time': obj.start_time.isoformat() if obj.start_time else None,
+                        'end_time': obj.end_time.isoformat() if obj.end_time else None,
+                        'tags': obj.tags,
+                        'completed': obj.completed,
+                    })
+
+            elif response_type == 'note':
+                from actions.models import Note
+                obj = Note.objects.filter(pk=item_id).first()
+                if obj:
+                    metadata.update({
+                        'title': obj.title or '',
+                        'note_content': obj.original,
+                    })
+
+            # Remove keys whose value is None to keep the response clean
+            metadata = {k: v for k, v in metadata.items() if v is not None}
+            message_data['metadata'] = metadata
+
+        except Exception as e:
+            print(f"⚠️ Failed to enrich chat history metadata: {e}")
+
+        return message_data
+
     def get(self, request):
         messages = ChatMessage.objects.filter(user=request.user).order_by('created_at')
         serializer = ChatMessageSerializer(messages, many=True)
+
+        enriched = [self._enrich_metadata(msg) for msg in serializer.data]
+
         return Response({
-            'messages': serializer.data,
+            'messages': enriched,
             'total_count': messages.count()
         }, status=status.HTTP_200_OK)
 
