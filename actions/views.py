@@ -330,9 +330,11 @@ class TestFCMView(APIView):
             print(f"   Token: {profile.fcm_token[:20]}...")
             print(f"{'='*60}\n")
             
-            # Send test notification
-            result = send_fcm_notification.delay(
-                user_id=user.id,
+            # Send test notification synchronously to get immediate feedback
+            from actions.fcm_service import send_push_notification
+            
+            result = send_push_notification(
+                fcm_token=profile.fcm_token,
                 title="🧪 Test Notification",
                 body="If you see this, Firebase communication is working!",
                 data={
@@ -341,16 +343,24 @@ class TestFCMView(APIView):
                 }
             )
             
-            return Response({
-                'status': 'success',
-                'message': 'Test notification sent to Firebase',
-                'instructions': 'Check terminal logs for Firebase response',
-                'what_to_look_for': [
-                    '✅ SUCCESS! FIREBASE SERVER RESPONDED - means backend → Firebase works',
-                    '❌ FIREBASE REJECTED - means backend → Firebase works but token invalid',
-                    'If app doesn\'t receive - problem is in Flutter app FCM setup'
-                ]
-            }, status=status.HTTP_200_OK)
+            if result['success']:
+                return Response({
+                    'status': 'success',
+                    'message': 'Test notification sent to Firebase',
+                    'firebase_response': {
+                        'message_id': result['message_id'],
+                        'timestamp': timezone.now().isoformat(),
+                    },
+                    'verification': '✅ SUCCESS! Firebase accepted the message. If the app hasn\'t received it, check the Flutter app setup.'
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({
+                    'status': 'error',
+                    'message': 'Firebase rejected the request',
+                    'error_details': result.get('error'),
+                    'error_type': result.get('error_type'),
+                    'troubleshooting': 'Check Firebase credentials or if the device token is still valid.'
+                }, status=status.HTTP_400_BAD_REQUEST)
             
         except UserProfile.DoesNotExist:
             return Response({
