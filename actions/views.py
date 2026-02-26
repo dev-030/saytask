@@ -420,10 +420,10 @@ class SendNotificationView(APIView):
                 data=request.data.get('data', {})
             )
             
-            if result:
+            if result and result.get('success'):
                 return Response({
                     'success': True,
-                    'message_id': result,
+                    'message_id': result.get('message_id'),
                     'details': {
                         'token': token[:20] + '...',
                         'title': title,
@@ -434,7 +434,7 @@ class SendNotificationView(APIView):
             else:
                 return Response({
                     'success': False,
-                    'error': 'Failed to send notification',
+                    'error': result.get('error') if result else 'Failed to send notification',
                     'message': '❌ Firebase rejected the notification (invalid token or Firebase not initialized)'
                 }, status=status.HTTP_400_BAD_REQUEST)
                 
