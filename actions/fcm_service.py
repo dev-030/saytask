@@ -42,7 +42,7 @@ def send_push_notification(fcm_token, title, body, data=None):
         if not _firebase_initialized:
             logger.error("❌ Firebase not initialized")
             print("❌ Firebase not initialized")
-            return None
+            return {'success': False, 'error': 'Firebase not initialized', 'error_type': 'init_failed'}
         
         # Log the attempt
         logger.info(f"🚀 ATTEMPTING FCM SEND at {datetime.now()}")
@@ -109,7 +109,7 @@ def send_push_notification(fcm_token, title, body, data=None):
         print(f"   If app doesn't receive: Check Flutter app FCM setup")
         print(f"{'='*60}\n")
         
-        return response
+        return {'success': True, 'message_id': response}
         
     except messaging.UnregisteredError as e:
         logger.error(f"❌ FCM token is invalid or unregistered: {e}")
@@ -118,7 +118,7 @@ def send_push_notification(fcm_token, title, body, data=None):
         print(f"   This means: Backend → Firebase = WORKING ✓")
         print(f"   But: Token is invalid (device uninstalled app?)")
         print(f"{'='*60}\n")
-        return None
+        return {'success': False, 'error': str(e), 'error_type': 'unregistered'}
     except Exception as e:
         logger.error(f"❌ Error sending FCM notification: {type(e).__name__}: {e}")
         print(f"\n{'='*60}")
@@ -127,7 +127,7 @@ def send_push_notification(fcm_token, title, body, data=None):
         print(f"   Error: {e}")
         print(f"   Check: Firebase credentials, network, etc.")
         print(f"{'='*60}\n")
-        return None
+        return {'success': False, 'error': str(e), 'error_type': 'generic'}
 
 
 def send_push_notification_multicast(fcm_tokens, title, body, data=None):

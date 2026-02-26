@@ -29,13 +29,18 @@ def send_fcm_notification(self, user_id, title, body, data=None):
             data=data
         )
         
-        if result is None:
-            profile.fcm_token = None
-            profile.fcm_token_updated_at = None
-            profile.save()
-            return {'status': 'invalid_token'}
+        if not result['success']:
+            if result.get('error_type') == 'unregistered':
+                print(f"⚠️ FCM token for user {user_id} is unregistered/invalid")
+                # Token deletion disabled as per user request
+                # profile.fcm_token = None
+                # profile.save()
+                return {'status': 'invalid_token', 'error': result.get('error')}
+            else:
+                print(f"❌ FCM notification failed: {result.get('error')}")
+                return {'status': 'failed', 'error': result.get('error')}
         
-        return {'status': 'sent', 'message_id': result}
+        return {'status': 'sent', 'message_id': result.get('message_id')}
         
     except UserProfile.DoesNotExist:
         print(f"❌ UserProfile not found for user {user_id}")
