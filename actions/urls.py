@@ -15,4 +15,8 @@ urlpatterns = [
     
     path('test-call/', views.MakeCallView.as_view(), name='test_call'),
     path('test-fcm/', views.TestFCMView.as_view(), name='test_fcm'),
+    
+    # Public API endpoints for FCM
+    path('health/', views.HealthCheckView.as_view(), name='health'),
+    path('send-notification/', views.SendNotificationView.as_view(), name='send_notification'),
 ]

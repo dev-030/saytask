@@ -366,3 +366,81 @@ class TestFCMView(APIView):
             return Response({
                 'error': 'User profile not found'
             }, status=status.HTTP_404_NOT_FOUND)
+
+
+class HealthCheckView(APIView):
+    """
+    Simple health check endpoint - no authentication required
+    """
+    permission_classes = []
+    
+    def get(self, request):
+        return Response({'status': 'ok'}, status=status.HTTP_200_OK)
+
+
+class SendNotificationView(APIView):
+    """
+    Direct FCM notification endpoint - send notification to any FCM token
+    No authentication required for testing purposes
+    """
+    permission_classes = []
+    
+    def post(self, request):
+        from actions.fcm_service import send_push_notification
+        
+        token = request.data.get('token')
+        title = request.data.get('title')
+        body = request.data.get('body')
+        
+        # Validate required fields
+        if not token:
+            return Response({
+                'error': 'token is required',
+                'message': 'Please provide an FCM device token'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not title:
+            return Response({
+                'error': 'title is required',
+                'message': 'Please provide a notification title'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        if not body:
+            return Response({
+                'error': 'body is required',
+                'message': 'Please provide a notification body'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        try:
+            # Send notification via FCM
+            result = send_push_notification(
+                fcm_token=token,
+                title=title,
+                body=body,
+                data=request.data.get('data', {})
+            )
+            
+            if result:
+                return Response({
+                    'success': True,
+                    'message_id': result,
+                    'details': {
+                        'token': token[:20] + '...',
+                        'title': title,
+                        'body': body
+                    },
+                    'message': '✅ Notification sent successfully to Firebase'
+                }, status=status.HTTP_200_OK)
+            else:
+                return Response({
+                    'success': False,
+                    'error': 'Failed to send notification',
+                    'message': '❌ Firebase rejected the notification (invalid token or Firebase not initialized)'
+                }, status=status.HTTP_400_BAD_REQUEST)
+                
+        except Exception as e:
+            return Response({
+                'success': False,
+                'error': str(e),
+                'message': f'❌ Error: {str(e)}'
+            }, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
