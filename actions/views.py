@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from .models import Event, Task, Note
 from .serializers import EventSerializer, TaskSerializer, NoteSerializer
 from subscription.utils import check_usage_limit, increment_usage
@@ -299,3 +300,59 @@ class MakeCallView(APIView):
         )
         
         return Response({'status': 'success', 'call_uuid': call_uuid, 'message': 'FCM VoIP notification sent to your device'}, status=status.HTTP_200_OK)
+
+
+class TestFCMView(APIView):
+    """
+    Test endpoint to verify Firebase FCM communication.
+    Use this to confirm backend → Firebase is working.
+    """
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        from actions.tasks import send_fcm_notification
+        from authentication.models import UserProfile
+        
+        user = request.user
+        
+        # Get user's FCM token
+        try:
+            profile = UserProfile.objects.get(user=user)
+            if not profile.fcm_token:
+                return Response({
+                    'error': 'No FCM token found',
+                    'message': 'User has not registered device token'
+                }, status=status.HTTP_400_BAD_REQUEST)
+            
+            print(f"\n{'='*60}")
+            print(f"🧪 TESTING FCM NOTIFICATION")
+            print(f"   User: {user.email}")
+            print(f"   Token: {profile.fcm_token[:20]}...")
+            print(f"{'='*60}\n")
+            
+            # Send test notification
+            result = send_fcm_notification.delay(
+                user_id=user.id,
+                title="🧪 Test Notification",
+                body="If you see this, Firebase communication is working!",
+                data={
+                    'type': 'test',
+                    'timestamp': str(timezone.now())
+                }
+            )
+            
+            return Response({
+                'status': 'success',
+                'message': 'Test notification sent to Firebase',
+                'instructions': 'Check terminal logs for Firebase response',
+                'what_to_look_for': [
+                    '✅ SUCCESS! FIREBASE SERVER RESPONDED - means backend → Firebase works',
+                    '❌ FIREBASE REJECTED - means backend → Firebase works but token invalid',
+                    'If app doesn\'t receive - problem is in Flutter app FCM setup'
+                ]
+            }, status=status.HTTP_200_OK)
+            
+        except UserProfile.DoesNotExist:
+            return Response({
+                'error': 'User profile not found'
+            }, status=status.HTTP_404_NOT_FOUND)

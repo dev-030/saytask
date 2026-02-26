@@ -2,8 +2,11 @@ import os
 import firebase_admin
 from firebase_admin import credentials, messaging
 from django.conf import settings
+import logging
+from datetime import datetime
 
 
+logger = logging.getLogger(__name__)
 _firebase_initialized = False
 
 
@@ -29,6 +32,7 @@ def initialize_firebase():
 def send_push_notification(fcm_token, title, body, data=None):
 
     if not fcm_token:
+        logger.warning("⚠️ No FCM token provided")
         print("⚠️ No FCM token provided")
         return None
     
@@ -36,8 +40,23 @@ def send_push_notification(fcm_token, title, body, data=None):
         initialize_firebase()
         
         if not _firebase_initialized:
+            logger.error("❌ Firebase not initialized")
             print("❌ Firebase not initialized")
             return None
+        
+        # Log the attempt
+        logger.info(f"🚀 ATTEMPTING FCM SEND at {datetime.now()}")
+        logger.info(f"   Token: {fcm_token[:20]}...")
+        logger.info(f"   Title: {title}")
+        logger.info(f"   Body: {body}")
+        logger.info(f"   Data: {data}")
+        print(f"\n{'='*60}")
+        print(f"🚀 SENDING TO FIREBASE FCM SERVER")
+        print(f"   Time: {datetime.now()}")
+        print(f"   Token: {fcm_token[:20]}...")
+        print(f"   Title: {title}")
+        print(f"   Body: {body}")
+        print(f"{'='*60}\n")
         
         # Construct message
         message_args = {
@@ -75,15 +94,39 @@ def send_push_notification(fcm_token, title, body, data=None):
         
         message = messaging.Message(**message_args)
         
+        # THIS IS THE ACTUAL API CALL TO FIREBASE SERVERS
         response = messaging.send(message)
-        print(f"✅ FCM notification sent: {response}")
+        
+        # If we get here, Firebase accepted the message
+        logger.info(f"✅ FIREBASE RESPONSE RECEIVED: {response}")
+        logger.info(f"   Message ID: {response}")
+        logger.info(f"   This confirms backend → Firebase communication successful!")
+        print(f"\n{'='*60}")
+        print(f"✅ SUCCESS! FIREBASE SERVER RESPONDED")
+        print(f"   Message ID: {response}")
+        print(f"   Time: {datetime.now()}")
+        print(f"   This proves: Backend → Firebase = WORKING ✓")
+        print(f"   If app doesn't receive: Check Flutter app FCM setup")
+        print(f"{'='*60}\n")
+        
         return response
         
-    except messaging.UnregisteredError:
-        print("❌ FCM token is invalid or unregistered")
+    except messaging.UnregisteredError as e:
+        logger.error(f"❌ FCM token is invalid or unregistered: {e}")
+        print(f"\n{'='*60}")
+        print(f"❌ FIREBASE REJECTED: Invalid/Unregistered Token")
+        print(f"   This means: Backend → Firebase = WORKING ✓")
+        print(f"   But: Token is invalid (device uninstalled app?)")
+        print(f"{'='*60}\n")
         return None
     except Exception as e:
-        print(f"❌ Error sending FCM notification: {e}")
+        logger.error(f"❌ Error sending FCM notification: {type(e).__name__}: {e}")
+        print(f"\n{'='*60}")
+        print(f"❌ ERROR COMMUNICATING WITH FIREBASE")
+        print(f"   Error Type: {type(e).__name__}")
+        print(f"   Error: {e}")
+        print(f"   Check: Firebase credentials, network, etc.")
+        print(f"{'='*60}\n")
         return None
 
 
