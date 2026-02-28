@@ -307,65 +307,55 @@ class TestFCMView(APIView):
     Test endpoint to verify Firebase FCM communication.
     Use this to confirm backend → Firebase is working.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = []
 
     def post(self, request):
-        from actions.tasks import send_fcm_notification
-        from authentication.models import UserProfile
         
-        user = request.user
+        # Get FCM token from request data since user is not authenticated
+        fcm_token = request.data.get('token')
         
-        # Get user's FCM token
-        try:
-            profile = UserProfile.objects.get(user=user)
-            if not profile.fcm_token:
-                return Response({
-                    'error': 'No FCM token found',
-                    'message': 'User has not registered device token'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-            print(f"\n{'='*60}")
-            print(f"🧪 TESTING FCM NOTIFICATION")
-            print(f"   User: {user.email}")
-            print(f"   Token: {profile.fcm_token[:20]}...")
-            print(f"{'='*60}\n")
-            
-            # Send test notification synchronously to get immediate feedback
-            from actions.fcm_service import send_push_notification
-            
-            result = send_push_notification(
-                fcm_token=profile.fcm_token,
-                title="🧪 Test Notification",
-                body="If you see this, Firebase communication is working!",
-                data={
-                    'type': 'test',
-                    'timestamp': str(timezone.now())
-                }
-            )
-            
-            if result['success']:
-                return Response({
-                    'status': 'success',
-                    'message': 'Test notification sent to Firebase',
-                    'firebase_response': {
-                        'message_id': result['message_id'],
-                        'timestamp': timezone.now().isoformat(),
-                    },
-                    'verification': '✅ SUCCESS! Firebase accepted the message. If the app hasn\'t received it, check the Flutter app setup.'
-                }, status=status.HTTP_200_OK)
-            else:
-                return Response({
-                    'status': 'error',
-                    'message': 'Firebase rejected the request',
-                    'error_details': result.get('error'),
-                    'error_type': result.get('error_type'),
-                    'troubleshooting': 'Check Firebase credentials or if the device token is still valid.'
-                }, status=status.HTTP_400_BAD_REQUEST)
-            
-        except UserProfile.DoesNotExist:
+        if not fcm_token:
             return Response({
-                'error': 'User profile not found'
-            }, status=status.HTTP_404_NOT_FOUND)
+                'error': 'token is required',
+                'message': 'Please provide an FCM device token in the request body'
+            }, status=status.HTTP_400_BAD_REQUEST)
+        
+        print(f"\n{'='*60}")
+        print(f"🧪 TESTING FCM NOTIFICATION")
+        print(f"   Token: {fcm_token[:20]}...")
+        print(f"{'='*60}\n")
+        
+        # Send test notification synchronously to get immediate feedback
+        from actions.fcm_service import send_push_notification
+        
+        result = send_push_notification(
+            fcm_token=fcm_token,
+            title="🧪 Test Notification",
+            body="If you see this, Firebase communication is working!",
+            data={
+                'type': 'test',
+                'timestamp': str(timezone.now())
+            }
+        )
+        
+        if result and result.get('success'):
+            return Response({
+                'status': 'success',
+                'message': 'Test notification sent to Firebase',
+                'firebase_response': {
+                    'message_id': result['message_id'],
+                    'timestamp': timezone.now().isoformat(),
+                },
+                'verification': '✅ SUCCESS! Firebase accepted the message. If the app hasn\'t received it, check the Flutter app setup.'
+            }, status=status.HTTP_200_OK)
+        else:
+            return Response({
+                'status': 'error',
+                'message': 'Firebase rejected the request',
+                'error_details': result.get('error'),
+                'error_type': result.get('error_type'),
+                'troubleshooting': 'Check Firebase credentials or if the device token is still valid.'
+            }, status=status.HTTP_400_BAD_REQUEST)
 
 
 class HealthCheckView(APIView):

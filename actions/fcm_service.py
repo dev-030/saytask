@@ -13,20 +13,24 @@ _firebase_initialized = False
 def initialize_firebase():
     global _firebase_initialized
     
-    if not _firebase_initialized:
-        try:
-            if not firebase_admin._apps:
-                cred_path = getattr(settings, 'FIREBASE_CREDENTIALS_PATH', None)
-                
-                if cred_path and os.path.exists(cred_path):
-                    cred = credentials.Certificate(cred_path)
-                    firebase_admin.initialize_app(cred)
-                    _firebase_initialized = True
-                    print("✅ Firebase Admin SDK initialized")
-                else:
-                    print("⚠️ Firebase credentials file not found")
-        except Exception as e:
-            print(f"❌ Error initializing Firebase: {e}")
+    try:
+        cred_path = getattr(settings, 'FIREBASE_CREDENTIALS_PATH', None)
+        
+        if cred_path and os.path.exists(cred_path):
+            # If Firebase is already initialized, we delete the app first to force a reload 
+            # in case the credentials file was updated while the server was running
+            if len(firebase_admin._apps) > 0:
+                print("🔄 Restarting Firebase Admin SDK with new credentials...")
+                firebase_admin.delete_app(firebase_admin.get_app())
+            
+            cred = credentials.Certificate(cred_path)
+            firebase_admin.initialize_app(cred)
+            _firebase_initialized = True
+            print("✅ Firebase Admin SDK initialized with fresh credentials")
+        else:
+            print("⚠️ Firebase credentials file not found")
+    except Exception as e:
+        print(f"❌ Error initializing Firebase: {e}")
 
 
 def send_push_notification(fcm_token, title, body, data=None):

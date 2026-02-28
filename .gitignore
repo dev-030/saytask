@@ -46,3 +46,4 @@ celerybeat-schedule
 
 # Pycharm log files
 *.log
+firebase-credentials.json
