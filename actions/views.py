@@ -262,26 +262,32 @@ class TaskDetailView(APIView):
 class MakeCallView(APIView):
     """
     Temporary view for testing In-App VoIP calls manually (via FCM).
+    No authentication required for testing purposes.
     """
-    permission_classes = [IsAuthenticated]
+    permission_classes = []
 
     def post(self, request):
-        from actions.tasks import send_fcm_notification
+        from actions.fcm_service import send_push_notification
         import json
         import uuid
         
-        message = request.data.get('message', 'This is a test call from SayTask.')
+        token = request.data.get('token')
+        message = request.data.get('message', 'This is a test call from SayTask AI.')
         
-        user = request.user
+        if not token:
+            return Response({
+                'error': 'token is required',
+                'message': 'Please provide an FCM device token'
+            }, status=status.HTTP_400_BAD_REQUEST)
         
-        print(f"📞 Initiating FCM VoIP call to user: {user.email}")
+        print(f"📞 Initiating manual FCM VoIP call to token: {token[:20]}...")
         
         # Construct VOIP payload
         call_uuid = str(uuid.uuid4())
         voip_payload = {
             "type": "voip_call",
             "uuid": call_uuid,
-            "caller_name": "SayTask AI",
+            "caller_name": "SayTask AI (Test)",
             "handle": "SayTask",
             "app_name": "SayTask",
             "has_video": "false",
@@ -291,15 +297,27 @@ class MakeCallView(APIView):
             })
         }
         
-        # Trigger async task
-        send_fcm_notification.delay(
-            user_id=user.id,
+        # Trigger notification synchronously for immediate feedback
+        result = send_push_notification(
+            fcm_token=token,
             title=None,
             body=None,
             data=voip_payload
         )
         
-        return Response({'status': 'success', 'call_uuid': call_uuid, 'message': 'FCM VoIP notification sent to your device'}, status=status.HTTP_200_OK)
+        if result and result.get('success'):
+            return Response({
+                'status': 'success',
+                'call_uuid': call_uuid,
+                'message_id': result.get('message_id'),
+                'message': 'FCM VoIP notification sent successfully'
+            }, status=status.HTTP_200_OK)
+        else:
+            return Response({
+                'status': 'error',
+                'error': result.get('error') if result else 'Failed to send VoIP notification',
+                'message': '❌ Firebase rejected the VoIP notification'
+            }, status=status.HTTP_400_BAD_REQUEST)
 
 
 class TestFCMView(APIView):
