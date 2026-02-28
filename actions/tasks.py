@@ -4,7 +4,6 @@ from django.contrib.contenttypes.models import ContentType
 from .models import Reminder, Event, Task
 from authentication.models import UserProfile
 from .fcm_service import send_push_notification
-from .fcm_service import send_push_notification
 import json
 
 from datetime import timedelta
